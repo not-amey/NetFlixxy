@@ -1,0 +1,91 @@
+{
+  "name": "netflixxy",
+  "productName": "NetFlixxy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Personal Netflix-style offline media browser and player for Windows",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "start": "electron .",
+    "build": "vite build",
+    "dist:win": "npm run build && electron-builder --win nsis",
+    "test:parser": "node electron/scanner/test-parser.js",
+    "test:store": "node electron/db/test-store.js"
+  },
+  "keywords": [
+    "netflix",
+    "media-player",
+    "electron",
+    "offline"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "electron-updater": "^6.8.11",
+    "hls.js": "^1.7.4",
+    "lucide-react": "^1.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "uiohook-napi": "^1.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^41.3.0",
+    "electron-builder": "^26.18.0",
+    "vite": "^6.1.0",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6"
+  },
+  "build": {
+    "appId": "com.netflixxy.app",
+    "productName": "NetFlixxy",
+    "publish": {
+      "provider": "github",
+      "owner": "not-amey",
+      "repo": "NetFlixxy"
+    },
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NetFlixxy",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "uninstallDisplayName": "NetFlixxy"
+    }
+  }
+}

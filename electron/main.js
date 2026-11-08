@@ -7,7 +7,7 @@ import { exec } from 'child_process';
 import { Store } from './db/store.js';
 import { scanLibrary } from './scanner/scanner.js';
 import { generateThumbnail, pauseThumbnails, resumeThumbnails } from './scanner/thumbnails.js';
-import { startStreamServer } from './streaming/stream-server.js';
+import { startStreamServer, setPhoneMode, getPhoneModeStatus, getLanIp } from './streaming/stream-server.js';
 import { previewGenerator, hasPreviewFrames } from './scanner/preview-generator.js';
 
 const require = createRequire(import.meta.url);
@@ -407,8 +407,22 @@ app.whenReady().then(() => {
 
   // Start local streaming server
   streamServer = startStreamServer(39281);
+  const initialSettings = Store.getSettings();
+  if (initialSettings.phoneModeEnabled) {
+    setPhoneMode(true, initialSettings.phoneModePort || 8080);
+  }
 
   // Setup IPC handlers
+  ipcMain.handle('phone-mode:get-status', async () => {
+    return getPhoneModeStatus();
+  });
+
+  ipcMain.handle('phone-mode:toggle', async (_event, enabled) => {
+    const status = setPhoneMode(enabled);
+    Store.saveSettings({ phoneModeEnabled: !!enabled });
+    return status;
+  });
+
   ipcMain.handle('library:get', async () => {
     return Store.getLibrary();
   });
@@ -437,6 +451,9 @@ app.whenReady().then(() => {
   ipcMain.handle('settings:save', async (_event, newSettings) => {
     const saved = Store.saveSettings(newSettings);
     registerMiniShortcut();
+    if (newSettings && newSettings.phoneModeEnabled !== undefined) {
+      setPhoneMode(newSettings.phoneModeEnabled, saved.phoneModePort || 8080);
+    }
     return saved;
   });
 
@@ -669,6 +686,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  setPhoneMode(false);
   if (streamServer) {
     try {
       streamServer.close();
@@ -682,6 +700,7 @@ app.on('window-all-closed', () => {
     try {
       uIOhook.stop();
     } catch {}
+    setPhoneMode(false);
     if (streamServer) {
       try {
         streamServer.close();

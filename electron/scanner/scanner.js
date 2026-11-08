@@ -279,7 +279,7 @@ export async function scanLibrary(config, onProgress = null) {
       });
 
       movies.push({
-        id: `movie_${Buffer.from(videoPath).toString('base64url').slice(0, 24)}`,
+        id: `movie_${crypto.createHash('md5').update(videoPath).digest('hex').slice(0, 16)}`,
         type: 'movie',
         title: parsed.title,
         year: parsed.year,

@@ -3,12 +3,14 @@ import fs from 'fs';
 import path from 'path';
 import url from 'url';
 import crypto from 'crypto';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { spawn, exec, execFile } from 'child_process';
 import { generateThumbnail, pauseThumbnails, resumeThumbnails } from '../scanner/thumbnails.js';
 import { Store } from '../db/store.js';
 import { previewGenerator, PREVIEWS_CACHE_DIR } from '../scanner/preview-generator.js';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg-path.js';
+import { renderLibraryHtml, renderPlayerHtml } from './phone-pages.js';
 
 const APP_DATA = Store.getPaths().appDataDir;
 const SUB_CACHE_DIR = path.join(APP_DATA, 'subtitles');
@@ -548,7 +550,7 @@ function getMediaDetails(filePath) {
                 language: s.tags?.language || '',
                 title: s.tags?.title || '',
                 label,
-                url: `http://127.0.0.1:39281/sub?file=${encodeURIComponent(filePath)}&streamIndex=${s.index}`
+                url: `/sub?file=${encodeURIComponent(filePath)}&streamIndex=${s.index}`
               });
               sIdx++;
             }
@@ -575,7 +577,7 @@ function getMediaDetails(filePath) {
               type: 'external',
               path: fullPath,
               label: `External - ${label} (${fExt.replace('.', '').toUpperCase()})`,
-              url: `http://127.0.0.1:39281/sub?file=${encodeURIComponent(fullPath)}&video=${encodeURIComponent(filePath)}`
+              url: `/sub?file=${encodeURIComponent(fullPath)}&video=${encodeURIComponent(filePath)}`
             });
           }
         }
@@ -607,29 +609,450 @@ function getMediaDetails(filePath) {
   });
 }
 
+function normalizeIp(rawIp) {
+  if (!rawIp) return '';
+  let ip = String(rawIp).trim();
+  if (ip.startsWith('::ffff:')) {
+    ip = ip.slice(7);
+  }
+  return ip;
+}
+
+export function isPrivateLanIp(rawIp) {
+  const ip = normalizeIp(rawIp);
+  if (!ip) return false;
+  if (ip === '127.0.0.1' || ip === '::1' || ip === 'localhost') return true;
+  // 10.0.0.0/8 (10.0.0.0 - 10.255.255.255)
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+    const parts = ip.split('.').map(Number);
+    return parts.every((p) => p >= 0 && p <= 255);
+  }
+  // 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+  if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+    const parts = ip.split('.').map(Number);
+    return parts.every((p) => p >= 0 && p <= 255);
+  }
+  // 192.168.0.0/16 (192.168.0.0 - 192.168.255.255)
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(ip)) {
+    const parts = ip.split('.').map(Number);
+    return parts.every((p) => p >= 0 && p <= 255);
+  }
+  return false;
+}
+
+export function getLanIp() {
+  const interfaces = os.networkInterfaces();
+  const candidates = [];
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === 'IPv4' && !iface.internal) {
+        if (isPrivateLanIp(iface.address)) {
+          const isVirtual = /virtual|vethernet|vmware|vbox|docker|loopback/i.test(name);
+          candidates.push({ address: iface.address, isVirtual });
+        }
+      }
+    }
+  }
+  const real = candidates.find((c) => !c.isVirtual);
+  if (real) return real.address;
+  if (candidates.length > 0) return candidates[0].address;
+  return '127.0.0.1';
+}
+
+function getHlsJsPath() {
+  const candidates = [
+    path.resolve(process.cwd(), 'node_modules/hls.js/dist/hls.min.js'),
+    path.join(__dirname, '../../node_modules/hls.js/dist/hls.min.js'),
+    path.join(__dirname, '../node_modules/hls.js/dist/hls.min.js'),
+    globalThis.process?.resourcesPath ? path.join(globalThis.process.resourcesPath, 'app.asar/node_modules/hls.js/dist/hls.min.js') : null,
+    globalThis.process?.resourcesPath ? path.join(globalThis.process.resourcesPath, 'node_modules/hls.js/dist/hls.min.js') : null
+  ].filter(Boolean);
+  for (const c of candidates) {
+    if (fs.existsSync(c)) return c;
+  }
+  return candidates[0];
+}
+
+function findLibraryItem(idOrPath) {
+  if (!idOrPath) return null;
+  const lib = Store.getLibrary();
+  const allSeries = [...(lib.series || []), ...(lib.anime || [])];
+
+  for (const m of (lib.movies || [])) {
+    if (m.id === idOrPath || m.filePath === idOrPath) return m;
+  }
+  for (const s of allSeries) {
+    if (s.id === idOrPath) return s;
+    for (const season of Object.values(s.seasons || {})) {
+      if (Array.isArray(season)) {
+        for (const ep of season) {
+          if (ep.id === idOrPath || ep.filePath === idOrPath) {
+            return {
+              ...ep,
+              seriesTitle: s.title,
+              title: `${s.title} - S${ep.season}:E${ep.episode} • ${ep.title || `Episode ${ep.episode}`}`
+            };
+          }
+        }
+      }
+    }
+  }
+  if (fs.existsSync(idOrPath)) {
+    return {
+      id: idOrPath,
+      title: path.basename(idOrPath, path.extname(idOrPath)),
+      filePath: idOrPath
+    };
+  }
+  return null;
+}
+
+function serveDirectRangeStream(req, res, targetFile) {
+  try {
+    const stat = fs.statSync(targetFile);
+    const fileSize = stat.size;
+    const range = req.headers.range;
+    const ext = path.extname(targetFile).toLowerCase();
+    let contentType = 'video/mp4';
+    if (ext === '.webm') contentType = 'video/webm';
+    else if (ext === '.mkv') contentType = 'video/x-matroska';
+    else if (ext === '.mov') contentType = 'video/quicktime';
+    else if (ext === '.m4v') contentType = 'video/mp4';
+
+    if (range) {
+      const parts = range.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+      if (start >= fileSize || end >= fileSize) {
+        res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+        return res.end();
+      }
+
+      const chunksize = end - start + 1;
+      const fileStream = fs.createReadStream(targetFile, { start, end });
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunksize,
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': '*'
+      });
+
+      fileStream.pipe(res);
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*'
+      });
+      fs.createReadStream(targetFile).pipe(res);
+    }
+  } catch (err) {
+    console.error('[StreamServer Range Error]', err);
+    if (!res.headersSent) {
+      res.writeHead(500);
+      res.end(`Streaming error: ${err.message}`);
+    }
+  }
+}
+
+let phoneServer = null;
+let isPhoneModeEnabled = false;
+let phonePort = 8080;
+
+export function getPhoneModeStatus() {
+  const lanIp = getLanIp();
+  return {
+    enabled: isPhoneModeEnabled,
+    ip: lanIp,
+    port: phonePort,
+    url: `http://${lanIp}:${phonePort}`
+  };
+}
+
+export function setPhoneMode(enabled, port = 8080) {
+  isPhoneModeEnabled = !!enabled;
+  phonePort = port;
+  const lanIp = getLanIp();
+
+  if (isPhoneModeEnabled) {
+    if (!phoneServer) {
+      phoneServer = http.createServer(handleRequest);
+      phoneServer.on('error', (err) => {
+        if (err.code === 'EADDRINUSE') {
+          console.warn(`[PhoneServer] Port ${phonePort} already in use. Reusing socket.`);
+        } else {
+          console.error('[PhoneServer Error]', err);
+        }
+      });
+      phoneServer.listen(phonePort, '0.0.0.0', () => {
+        console.log(`Phone streaming server active on http://${lanIp}:${phonePort}`);
+      });
+    }
+  } else {
+    if (phoneServer) {
+      try {
+        phoneServer.close();
+      } catch {}
+      phoneServer = null;
+      console.log('[PhoneServer] Phone streaming server stopped.');
+    }
+  }
+  return getPhoneModeStatus();
+}
+
 /**
  * Start lightweight local streaming and static web server.
  */
 export function startStreamServer(port = 39281) {
-  const server = http.createServer(async (req, res) => {
-    // CORS headers
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type');
+  const server = http.createServer(handleRequest);
 
-    if (req.method === 'OPTIONS') {
-      res.writeHead(204);
-      res.end();
-      return;
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`[StreamServer] Port ${port} is already bound by an existing instance. Reusing socket.`);
+    } else {
+      console.error('[StreamServer] Fatal server error:', err);
     }
+  });
+
+  server.listen(port, '127.0.0.1', () => {
+    console.log(`Stream and web server active on http://127.0.0.1:${port}`);
+  });
+
+  return server;
+}
+
+/**
+ * Main HTTP request handler used by both internal desktop server (port 39281)
+ * and home Wi-Fi phone server (port 8080).
+ */
+async function handleRequest(req, res) {
+  // CORS headers
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, HEAD, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Range, Content-Type, Authorization, X-Requested-With');
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
+
+  // Security check: Allow requests only from private LAN addresses (10.x, 172.16-31.x, 192.168.x, and 127.0.0.1)
+  const clientIp = req.socket.remoteAddress;
+  if (!isPrivateLanIp(clientIp)) {
+    res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('Forbidden: Requests allowed only from private LAN addresses.');
+    return;
+  }
+
+  // Also check for spoofed public IPs in headers
+  const forwardedHdr = req.headers['x-forwarded-for'];
+  const realIpHdr = req.headers['x-real-ip'];
+  const clientIpHdr = req.headers['client-ip'];
+  for (const h of [forwardedHdr, realIpHdr, clientIpHdr]) {
+    if (h) {
+      const ipToCheck = h.split(',')[0].trim();
+      if (!isPrivateLanIp(ipToCheck)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden: Requests allowed only from private LAN addresses.');
+        return;
+      }
+    }
+  }
 
     const parsedUrl = url.parse(req.url, true);
     const pathname = parsedUrl.pathname || '/';
     const targetFile = parsedUrl.query.file || parsedUrl.query.path;
 
+    // 0. Serve local hls.min.js for completely offline phone playback (no CDN)
+    if (pathname === '/hls.min.js' || pathname === '/js/hls.min.js') {
+      const hlsPath = getHlsJsPath();
+      if (hlsPath && fs.existsSync(hlsPath)) {
+        res.writeHead(200, {
+          'Content-Type': 'application/javascript; charset=utf-8',
+          'Cache-Control': 'public, max-age=604800'
+        });
+        fs.createReadStream(hlsPath).pipe(res);
+        return;
+      }
+      res.writeHead(404);
+      res.end('hls.min.js not found');
+      return;
+    }
+
+    // 0.1. Phone Library JSON API: GET /api/library
+    if (pathname === '/api/library') {
+      const lib = Store.getLibrary();
+      const allProg = Store.getAllProgress();
+
+      const attachProgress = (item) => ({
+        ...item,
+        progress: allProg[item.filePath] || null
+      });
+
+      const movies = (lib.movies || []).map(attachProgress);
+      const series = (lib.series || []).map((s) => {
+        const seasons = {};
+        for (const [k, eps] of Object.entries(s.seasons || {})) {
+          seasons[k] = (eps || []).map(attachProgress);
+        }
+        return {
+          ...s,
+          seasons,
+          progress: allProg[s.filePath] || null
+        };
+      });
+      const anime = (lib.anime || []).map((a) => {
+        const seasons = {};
+        for (const [k, eps] of Object.entries(a.seasons || {})) {
+          seasons[k] = (eps || []).map(attachProgress);
+        }
+        return {
+          ...a,
+          seasons,
+          progress: allProg[a.filePath] || null
+        };
+      });
+
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(JSON.stringify({ movies, series, anime }));
+      return;
+    }
+
+    // 0.2. Watch Progress API: GET /api/progress/:id and POST /api/progress
+    if (pathname.startsWith('/api/progress')) {
+      if (req.method === 'POST') {
+        let body = '';
+        req.on('data', (chunk) => (body += chunk));
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body || '{}');
+            let targetPath = data.filePath;
+            if (!targetPath && data.id) {
+              const it = findLibraryItem(data.id);
+              if (it) targetPath = it.filePath;
+            }
+            if (targetPath) {
+              const saved = Store.saveProgress(targetPath, {
+                currentTime: data.currentTime,
+                duration: data.duration,
+                completed: data.completed
+              });
+              res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(JSON.stringify({ ok: true, progress: saved }));
+            } else {
+              res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(JSON.stringify({ error: 'Missing target file path or valid id' }));
+            }
+          } catch (e) {
+            res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: e.message }));
+          }
+        });
+        return;
+      }
+
+      // GET /api/progress/:id
+      const idMatch = pathname.match(/^\/api\/progress\/(.+)$/);
+      const reqId = idMatch ? decodeURIComponent(idMatch[1]) : (parsedUrl.query.id || parsedUrl.query.file);
+      if (reqId) {
+        let targetPath = reqId;
+        const it = findLibraryItem(reqId);
+        if (it && it.filePath) targetPath = it.filePath;
+
+        const prog = Store.getProgress(targetPath);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(prog || { currentTime: 0, duration: 0, percentage: 0, completed: false }));
+        return;
+      }
+      res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ error: 'Missing id parameter' }));
+      return;
+    }
+
+    // 0.3. Media Info API: GET /api/media-info/:id
+    const infoMatch = pathname.match(/^\/api\/media-info\/(.+)$/);
+    if (infoMatch) {
+      const reqId = decodeURIComponent(infoMatch[1]);
+      let targetPath = reqId;
+      const it = findLibraryItem(reqId);
+      if (it && it.filePath) targetPath = it.filePath;
+
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: 'File not found' }));
+        return;
+      }
+      try {
+        const details = await getMediaDetails(targetPath);
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify(details));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+      return;
+    }
+
+    // 0.4. Phone Player Page: GET /watch/:id
+    const watchMatch = pathname.match(/^\/watch\/(.+)$/);
+    if (watchMatch || pathname === '/watch') {
+      const mediaId = watchMatch ? decodeURIComponent(watchMatch[1]) : (parsedUrl.query.id || '');
+      const item = findLibraryItem(mediaId);
+      if (!item || !item.filePath || !fs.existsSync(item.filePath)) {
+        res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
+        res.end('<h1 style="color:#fff;background:#141414;padding:40px;font-family:sans-serif;">Video not found. <a href="/" style="color:#e50914;">Return to library</a></h1>');
+        return;
+      }
+
+      const prog = Store.getProgress(item.filePath);
+      const initialProgress = prog?.currentTime || 0;
+      const details = await getMediaDetails(item.filePath);
+
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(renderPlayerHtml(item, initialProgress, details.isDirectPlayable));
+      return;
+    }
+
+    // 0.5. Dedicated Video Route: GET /video/:id (streams MP4/WebM with Range 206, or redirects MKV to HLS)
+    const videoRouteMatch = pathname.match(/^\/video\/(.+)$/);
+    if (videoRouteMatch) {
+      const vId = decodeURIComponent(videoRouteMatch[1]);
+      let resolvedVideoFile = vId;
+      const it = findLibraryItem(vId);
+      if (it && it.filePath) resolvedVideoFile = it.filePath;
+
+      if (!resolvedVideoFile || !fs.existsSync(resolvedVideoFile)) {
+        res.writeHead(404);
+        res.end('File not found');
+        return;
+      }
+
+      const details = await getMediaDetails(resolvedVideoFile);
+      if (!details.isDirectPlayable) {
+        res.writeHead(302, { Location: `/hls/playlist.m3u8?file=${encodeURIComponent(resolvedVideoFile)}&player=phone` });
+        res.end();
+        return;
+      }
+
+      serveDirectRangeStream(req, res, resolvedVideoFile);
+      return;
+    }
+
     // 1. Thumbnail endpoint
     if (pathname === '/thumb') {
       let resolvedFile = targetFile;
+      if (!resolvedFile && parsedUrl.query.id) {
+        const it = findLibraryItem(parsedUrl.query.id);
+        if (it) resolvedFile = it.poster || it.filePath;
+      }
       if (!resolvedFile || !fs.existsSync(resolvedFile)) {
         // Handle files transferred from another user profile (e.g. C:\Users\<OtherUser>\AppData\Roaming\NetFlixxy\...)
         if (resolvedFile) {
@@ -901,7 +1324,7 @@ export function startStreamServer(port = 39281) {
           const sStr = seg.start.toFixed(3);
           const dStr = seg.dur.toFixed(3);
           m3u8 += `#EXTINF:${dStr},\n`;
-          m3u8 += `http://127.0.0.1:39281/hls/segment.ts?file=${encodeURIComponent(targetFile)}&start=${sStr}&t=${dStr}&audio=${audioIndex}&player=${encodeURIComponent(player)}\n`;
+          m3u8 += `/hls/segment.ts?file=${encodeURIComponent(targetFile)}&start=${sStr}&t=${dStr}&audio=${audioIndex}&player=${encodeURIComponent(player)}\n`;
         }
         m3u8 += '#EXT-X-ENDLIST\n';
 
@@ -1013,7 +1436,24 @@ export function startStreamServer(port = 39281) {
       }
     }
 
-    // 5. Static Frontend File Server (serves dist/ directory)
+    // 5. Root Library endpoint: GET / or /index.html
+    if (pathname === '/' || pathname === '/index.html') {
+      const isHost8080 = req.headers.host && req.headers.host.includes(':8080');
+      const isElectron = (req.headers['user-agent'] || '').includes('Electron');
+
+      // Port 8080 OR non-Electron browser: serve Phone Library HTML
+      if (isHost8080 || !isElectron) {
+        res.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Cache-Control': 'no-cache'
+        });
+        res.end(renderLibraryHtml());
+        return;
+      }
+      // Otherwise Desktop Electron App: falls through to serve dist/index.html
+    }
+
+    // 6. Static Frontend File Server (serves dist/ directory)
     let safePath = path.normalize(pathname).replace(/^(\.\.[/\\])+/, '');
     if (safePath === '/' || safePath === '\\') {
       safePath = '/index.html';
@@ -1035,19 +1475,4 @@ export function startStreamServer(port = 39281) {
 
     res.writeHead(404);
     res.end('Not found');
-  });
-
-  server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-      console.warn(`[StreamServer] Port ${port} is already bound by an existing instance. Reusing socket.`);
-    } else {
-      console.error('[StreamServer] Fatal server error:', err);
-    }
-  });
-
-  server.listen(port, '127.0.0.1', () => {
-    console.log(`Stream and web server active on http://127.0.0.1:${port}`);
-  });
-
-  return server;
-}
+  }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileText, CheckCircle, AlertTriangle, Copy, Check, RefreshCw, Download } from 'lucide-react';
+import { X, Save, FileText, CheckCircle, AlertTriangle, Copy, Check, RefreshCw, Download, Smartphone, Wifi } from 'lucide-react';
 import { Settings, ScanReport } from '../types/media';
 
 interface SettingsModalProps {
@@ -44,6 +44,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [openInExternal, setOpenInExternal] = useState<boolean>(
     settings?.openInExternalPlayer ?? false
   );
+  const [phoneModeEnabled, setPhoneModeEnabled] = useState<boolean>(
+    settings?.phoneModeEnabled ?? false
+  );
+  const [phoneUrl, setPhoneUrl] = useState<string>('');
+  const [phoneCopied, setPhoneCopied] = useState<boolean>(false);
+  const [isTogglingPhone, setIsTogglingPhone] = useState<boolean>(false);
 
   // Sync state whenever settings prop updates
   useEffect(() => {
@@ -58,6 +64,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setMiniSize(settings.miniPlayerSize || 'M');
       setAutoPlayNext(settings.autoPlayNext ?? true);
       setOpenInExternal(settings.openInExternalPlayer ?? false);
+      if (typeof settings.phoneModeEnabled === 'boolean') {
+        setPhoneModeEnabled(settings.phoneModeEnabled);
+      }
     }
   }, [settings]);
 
@@ -77,6 +86,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       if (api.getAppVersion) {
         api.getAppVersion().then((v: string) => {
           if (v) setAppVersion(v);
+        }).catch(() => {});
+      }
+      if (api.getPhoneModeStatus) {
+        api.getPhoneModeStatus().then((status: any) => {
+          if (status) {
+            setPhoneModeEnabled(Boolean(status.enabled));
+            if (status.url) setPhoneUrl(status.url);
+          }
         }).catch(() => {});
       }
       if (api.onUpdaterStatus) {
@@ -119,6 +136,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleTogglePhoneMode = async (enabled: boolean) => {
+    setIsTogglingPhone(true);
+    setPhoneModeEnabled(enabled);
+    try {
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.togglePhoneMode) {
+        const res = await (window as any).electronAPI.togglePhoneMode(enabled);
+        if (res) {
+          setPhoneModeEnabled(Boolean(res.enabled));
+          if (res.url) setPhoneUrl(res.url);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to toggle phone mode:', err);
+    } finally {
+      setIsTogglingPhone(false);
+    }
+  };
+
+  const handleCopyPhoneUrl = () => {
+    if (!phoneUrl) return;
+    navigator.clipboard.writeText(phoneUrl);
+    setPhoneCopied(true);
+    setTimeout(() => setPhoneCopied(false), 2500);
+  };
+
   // Scan Report state
   const [scanReport, setScanReport] = useState<ScanReport | null>(null);
   const [reportFilter, setReportFilter] = useState('');
@@ -158,7 +200,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       miniPlayerShortcut: miniShortcut.trim() || 'CommandOrControl+M',
       miniPlayerSize: miniSize,
       autoPlayNext,
-      openInExternalPlayer: openInExternal
+      openInExternalPlayer: openInExternal,
+      phoneModeEnabled
     });
     onClose();
   };
@@ -501,6 +544,113 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <span>Open videos directly in External Player (VLC / MPV)</span>
               </label>
+            </div>
+
+            {/* Phone Streaming Mode (Wi-Fi) */}
+            <div style={{ marginTop: '16px', padding: '16px', background: '#1c1c1c', borderRadius: '6px', border: phoneModeEnabled ? '1px solid #e50914' : '1px solid #333', transition: 'border-color 0.2s' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                <div style={{ flex: 1, minWidth: '240px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <Smartphone size={18} style={{ color: phoneModeEnabled ? '#e50914' : '#888' }} />
+                    <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: '#fff' }}>Phone Streaming Mode (Home Wi-Fi)</h3>
+                    <span style={{
+                      fontSize: '11px',
+                      padding: '2px 8px',
+                      borderRadius: '10px',
+                      fontWeight: 600,
+                      background: phoneModeEnabled ? 'rgba(70, 211, 105, 0.15)' : '#2c2c2c',
+                      color: phoneModeEnabled ? '#46d369' : '#888',
+                      border: phoneModeEnabled ? '1px solid #46d369' : '1px solid #444'
+                    }}>
+                      {phoneModeEnabled ? 'Active' : 'Off'}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '12px', color: '#888', margin: '4px 0 0' }}>
+                    Stream your offline movies and series directly to any phone or tablet on your home Wi-Fi via browser. No app required.
+                  </p>
+                </div>
+
+                {/* Toggle switch */}
+                <label style={{ position: 'relative', display: 'inline-block', width: '48px', height: '26px', cursor: 'pointer', flexShrink: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={phoneModeEnabled}
+                    disabled={isTogglingPhone}
+                    onChange={(e) => handleTogglePhoneMode(e.target.checked)}
+                    style={{ opacity: 0, width: 0, height: 0 }}
+                  />
+                  <span style={{
+                    position: 'absolute',
+                    cursor: 'pointer',
+                    inset: 0,
+                    backgroundColor: phoneModeEnabled ? '#e50914' : '#333',
+                    borderRadius: '26px',
+                    transition: '0.2s',
+                    border: '1px solid #444'
+                  }}>
+                    <span style={{
+                      position: 'absolute',
+                      content: '""',
+                      height: '18px',
+                      width: '18px',
+                      left: phoneModeEnabled ? '25px' : '3px',
+                      bottom: '3px',
+                      backgroundColor: '#fff',
+                      borderRadius: '50%',
+                      transition: '0.2s'
+                    }} />
+                  </span>
+                </label>
+              </div>
+
+              {/* URL Display Card when Enabled */}
+              {phoneModeEnabled && phoneUrl && (
+                <div style={{
+                  marginTop: '14px',
+                  padding: '12px 14px',
+                  background: '#242424',
+                  borderRadius: '4px',
+                  border: '1px solid #3a3a3a',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <Wifi size={16} style={{ color: '#46d369' }} />
+                    <div>
+                      <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                        Open in phone browser:
+                      </div>
+                      <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff', fontFamily: 'monospace', marginTop: '2px' }}>
+                        {phoneUrl}
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleCopyPhoneUrl}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '6px 12px',
+                      borderRadius: '4px',
+                      border: '1px solid #555',
+                      background: phoneCopied ? '#46d369' : '#333',
+                      color: phoneCopied ? '#000' : '#fff',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    {phoneCopied ? <Check size={14} /> : <Copy size={14} />}
+                    {phoneCopied ? 'Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Software Updates */}

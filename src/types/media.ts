@@ -101,6 +101,8 @@ export interface Settings {
   externalPlayerPath: string;
   miniPlayerShortcut?: string;
   miniPlayerSize?: 'S' | 'M' | 'L';
+  phoneModeEnabled?: boolean;
+  phoneModePort?: number;
 }
 
 export interface LibraryData {

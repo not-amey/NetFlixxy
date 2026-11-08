@@ -95,7 +95,9 @@ export const Store = {
       miniPlayerBounds: null,
       volume: 1.0,
       isMuted: false,
-      lastNonZeroVolume: 0.5
+      lastNonZeroVolume: 0.5,
+      phoneModeEnabled: false,
+      phoneModePort: 8080
     };
     return { ...defaults, ...readJsonSafe(SETTINGS_FILE, {}) };
   },

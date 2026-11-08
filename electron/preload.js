@@ -72,5 +72,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const subscription = (_event, data) => callback(data);
     ipcRenderer.on('updater:status', subscription);
     return () => ipcRenderer.removeListener('updater:status', subscription);
-  }
+  },
+
+  // Phone Streaming Mode API
+  getPhoneModeStatus: () => ipcRenderer.invoke('phone-mode:get-status'),
+  togglePhoneMode: (enabled) => ipcRenderer.invoke('phone-mode:toggle', enabled)
 });

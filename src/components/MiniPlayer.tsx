@@ -308,14 +308,20 @@ export const MiniPlayer: React.FC = () => {
           togglePlay();
           break;
         case 'ArrowLeft':
-        case 'KeyJ':
           e.preventDefault();
           skip(-5);
           break;
+        case 'KeyJ':
+          e.preventDefault();
+          skip(-10);
+          break;
         case 'ArrowRight':
-        case 'KeyL':
           e.preventDefault();
           skip(5);
+          break;
+        case 'KeyL':
+          e.preventDefault();
+          skip(10);
           break;
         case 'ArrowUp':
           e.preventDefault();

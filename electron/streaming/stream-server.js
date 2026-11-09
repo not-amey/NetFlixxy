@@ -5,12 +5,13 @@ import url from 'url';
 import crypto from 'crypto';
 import os from 'os';
 import { fileURLToPath } from 'url';
-import { spawn, exec, execFile } from 'child_process';
+import { spawn, exec, execFile, execSync } from 'child_process';
 import { generateThumbnail, pauseThumbnails, resumeThumbnails } from '../scanner/thumbnails.js';
+import { scanLibrary } from '../scanner/scanner.js';
 import { Store } from '../db/store.js';
 import { previewGenerator, PREVIEWS_CACHE_DIR } from '../scanner/preview-generator.js';
 import { getFfmpegPath, getFfprobePath } from '../utils/ffmpeg-path.js';
-import { renderLibraryHtml, renderPlayerHtml } from './phone-pages.js';
+import { renderLibraryHtml, renderPlayerHtml, renderPinHtml } from './phone-pages.js';
 
 const APP_DATA = Store.getPaths().appDataDir;
 const SUB_CACHE_DIR = path.join(APP_DATA, 'subtitles');
@@ -640,23 +641,96 @@ export function isPrivateLanIp(rawIp) {
   return false;
 }
 
-export function getLanIp() {
-  const interfaces = os.networkInterfaces();
-  const candidates = [];
-  for (const name of Object.keys(interfaces)) {
-    for (const iface of interfaces[name]) {
-      if (iface.family === 'IPv4' && !iface.internal) {
-        if (isPrivateLanIp(iface.address)) {
-          const isVirtual = /virtual|vethernet|vmware|vbox|docker|loopback/i.test(name);
-          candidates.push({ address: iface.address, isVirtual });
+export function getBestLanInfo() {
+  try {
+    const settings = Store.getSettings();
+    if (settings.phoneModeCustomIp && isPrivateLanIp(settings.phoneModeCustomIp)) {
+      return {
+        ip: settings.phoneModeCustomIp.trim(),
+        adapterName: 'Custom Override',
+        gateway: null,
+        isCustom: true
+      };
+    }
+  } catch {}
+
+  const ifaces = os.networkInterfaces();
+  const isVirtualName = (name) =>
+    /virtual|vbox|vmware|hyper-v|wsl|tailscale|loopback|vethernet|docker|default switch/i.test(name);
+  const isVirtualMac = (mac) => {
+    if (!mac) return false;
+    const m = mac.toLowerCase();
+    // VirtualBox: 08:00:27, 0a:00:27; VMware: 00:05:69, 00:0c:29, 00:1c:14, 00:50:56; Hyper-V: 00:15:5d
+    return m.startsWith('08:00:27') || m.startsWith('0a:00:27') ||
+           m.startsWith('00:05:69') || m.startsWith('00:0c:29') ||
+           m.startsWith('00:1c:14') || m.startsWith('00:50:56') ||
+           m.startsWith('00:15:5d');
+  };
+
+  // Try finding interface associated with active default route (gateway to internet / hotspot)
+  let defaultGatewayIp = null;
+  let defaultInterfaceIp = null;
+  try {
+    const routeOut = execSync('route print 0.0.0.0', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
+    const lines = routeOut.split('\n');
+    let inTable = false;
+    for (const line of lines) {
+      if (line.includes('Active Routes:')) { inTable = true; continue; }
+      if (inTable && line.includes('Persistent Routes:')) { inTable = false; break; }
+      if (inTable) {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length >= 5 && parts[0] === '0.0.0.0' && parts[1] === '0.0.0.0') {
+          const gw = parts[2];
+          const ifaceIp = parts[3];
+          if (gw !== 'On-link' && gw !== '0.0.0.0' && ifaceIp !== '127.0.0.1' && isPrivateLanIp(ifaceIp)) {
+            defaultGatewayIp = gw;
+            defaultInterfaceIp = ifaceIp;
+            break;
+          }
         }
       }
     }
+  } catch {}
+
+  if (defaultInterfaceIp) {
+    for (const [name, list] of Object.entries(ifaces)) {
+      if (isVirtualName(name)) continue;
+      const found = list.find((i) => i.family === 'IPv4' && i.address === defaultInterfaceIp && !isVirtualMac(i.mac));
+      if (found) {
+        return {
+          ip: defaultInterfaceIp,
+          adapterName: name,
+          gateway: defaultGatewayIp,
+          isCustom: false
+        };
+      }
+    }
   }
-  const real = candidates.find((c) => !c.isVirtual);
-  if (real) return real.address;
-  if (candidates.length > 0) return candidates[0].address;
-  return '127.0.0.1';
+
+  // Fallback: search Wi-Fi / Hotspot interface
+  let wifiCandidate = null;
+  let otherCandidate = null;
+  for (const [name, list] of Object.entries(ifaces)) {
+    if (isVirtualName(name)) continue;
+    for (const info of list) {
+      if (info.family === 'IPv4' && !info.internal && isPrivateLanIp(info.address) && !isVirtualMac(info.mac)) {
+        if (/wi-fi|wlan|wireless|hotspot/i.test(name)) {
+          wifiCandidate = { ip: info.address, adapterName: name, gateway: defaultGatewayIp, isCustom: false };
+          break;
+        } else if (!otherCandidate) {
+          otherCandidate = { ip: info.address, adapterName: name, gateway: defaultGatewayIp, isCustom: false };
+        }
+      }
+    }
+    if (wifiCandidate) break;
+  }
+
+  const chosen = wifiCandidate || otherCandidate || { ip: '127.0.0.1', adapterName: 'Loopback', gateway: null, isCustom: false };
+  return chosen;
+}
+
+export function getLanIp() {
+  return getBestLanInfo().ip;
 }
 
 function getHlsJsPath() {
@@ -762,21 +836,55 @@ function serveDirectRangeStream(req, res, targetFile) {
 let phoneServer = null;
 let isPhoneModeEnabled = false;
 let phonePort = 8080;
+let isLibraryScanning = false;
+
+export function getExpectedPinToken(pin) {
+  return crypto.createHash('sha256').update(String(pin || '1234') + '_netflixxy_phone_pin_salt').digest('hex');
+}
+
+export function parseCookies(req) {
+  const list = {};
+  const rc = req.headers.cookie;
+  if (!rc) return list;
+  rc.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    const key = parts.shift().trim();
+    if (key) list[key] = decodeURIComponent(parts.join('='));
+  });
+  return list;
+}
+
+export function isPinAuthorized(req) {
+  try {
+    const settings = Store.getSettings();
+    const configuredPin = settings.phoneModePin || '1234';
+    const cookies = parseCookies(req);
+    return cookies.netflixxy_pin === getExpectedPinToken(configuredPin);
+  } catch {
+    return false;
+  }
+}
 
 export function getPhoneModeStatus() {
-  const lanIp = getLanIp();
+  const lanInfo = getBestLanInfo();
+  const settings = Store.getSettings();
   return {
     enabled: isPhoneModeEnabled,
-    ip: lanIp,
+    ip: lanInfo.ip,
+    adapterName: lanInfo.adapterName,
+    gateway: lanInfo.gateway,
+    isCustom: !!lanInfo.isCustom,
     port: phonePort,
-    url: `http://${lanIp}:${phonePort}`
+    url: `http://${lanInfo.ip}:${phonePort}`,
+    customIp: settings.phoneModeCustomIp || '',
+    pin: settings.phoneModePin || '1234'
   };
 }
 
 export function setPhoneMode(enabled, port = 8080) {
   isPhoneModeEnabled = !!enabled;
   phonePort = port;
-  const lanIp = getLanIp();
+  const lanInfo = getBestLanInfo();
 
   if (isPhoneModeEnabled) {
     if (!phoneServer) {
@@ -789,7 +897,7 @@ export function setPhoneMode(enabled, port = 8080) {
         }
       });
       phoneServer.listen(phonePort, '0.0.0.0', () => {
-        console.log(`Phone streaming server active on http://${lanIp}:${phonePort}`);
+        console.log(`[PhoneServer] Active at http://${lanInfo.ip}:${phonePort} (${lanInfo.adapterName})`);
       });
     }
   } else {
@@ -882,6 +990,106 @@ async function handleRequest(req, res) {
       res.writeHead(404);
       res.end('hls.min.js not found');
       return;
+    }
+
+    // 0.01. PIN Verification & PIN Page Routes
+    if (pathname === '/pin') {
+      res.writeHead(200, {
+        'Content-Type': 'text/html; charset=utf-8',
+        'Cache-Control': 'no-cache'
+      });
+      res.end(renderPinHtml());
+      return;
+    }
+
+    if (pathname === '/api/verify-pin' && req.method === 'POST') {
+      let body = '';
+      req.on('data', (c) => (body += c));
+      req.on('end', () => {
+        try {
+          let pin = '';
+          const contentType = req.headers['content-type'] || '';
+          if (contentType.includes('application/json')) {
+            const data = JSON.parse(body || '{}');
+            pin = String(data.pin || '').trim();
+          } else {
+            const params = new URLSearchParams(body);
+            pin = String(params.get('pin') || '').trim();
+          }
+
+          const settings = Store.getSettings();
+          const configuredPin = String(settings.phoneModePin || '1234').trim();
+
+          if (pin === configuredPin) {
+            const token = getExpectedPinToken(configuredPin);
+            res.writeHead(200, {
+              'Content-Type': 'application/json; charset=utf-8',
+              'Set-Cookie': `netflixxy_pin=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000`
+            });
+            res.end(JSON.stringify({ success: true }));
+          } else {
+            res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({ error: 'Incorrect PIN' }));
+          }
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+
+    // 0.02. Phone Rescan Route: POST /api/rescan (behind PIN cookie, rejects concurrent scan, no folder paths in response)
+    if (pathname === '/api/rescan' || pathname === '/rescan') {
+      if (req.method === 'GET' && !isPinAuthorized(req)) {
+        res.writeHead(302, { Location: '/pin' });
+        res.end();
+        return;
+      }
+
+      if (req.method === 'POST') {
+        if (!isPinAuthorized(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'PIN authorization required' }));
+          return;
+        }
+
+        if (isLibraryScanning) {
+          res.writeHead(409, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'Library rescan already in progress' }));
+          return;
+        }
+
+        isLibraryScanning = true;
+        try {
+          const settings = Store.getSettings();
+          const scanResult = await scanLibrary(settings);
+          Store.saveLibrary(scanResult);
+          try {
+            previewGenerator.enqueueLibrary(scanResult);
+          } catch {}
+
+          // Do NOT return folder paths in response
+          const safeReport = {
+            success: true,
+            moviesCount: (scanResult.movies || []).length,
+            seriesCount: (scanResult.series || []).length,
+            animeCount: (scanResult.anime || []).length,
+            totalVideos: (scanResult.movies || []).length + (scanResult.series || []).length + (scanResult.anime || []).length,
+            scannedAt: new Date().toISOString()
+          };
+
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify(safeReport));
+        } catch (err) {
+          console.error('[Phone Rescan Error]', err);
+          res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ error: 'Rescan failed: ' + err.message }));
+        } finally {
+          isLibraryScanning = false;
+        }
+        return;
+      }
     }
 
     // 0.1. Phone Library JSON API: GET /api/library
@@ -1017,7 +1225,7 @@ async function handleRequest(req, res) {
       const details = await getMediaDetails(item.filePath);
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderPlayerHtml(item, initialProgress, details.isDirectPlayable));
+      res.end(renderPlayerHtml(item, initialProgress, details));
       return;
     }
 

@@ -417,10 +417,27 @@ app.whenReady().then(() => {
     return getPhoneModeStatus();
   });
 
+  ipcMain.handle('phone-mode:refresh', async () => {
+    return getPhoneModeStatus();
+  });
+
   ipcMain.handle('phone-mode:toggle', async (_event, enabled) => {
     const status = setPhoneMode(enabled);
     Store.saveSettings({ phoneModeEnabled: !!enabled });
     return status;
+  });
+
+  ipcMain.handle('phone-mode:update-config', async (_event, data) => {
+    const newSettings = {};
+    if (typeof data?.customIp === 'string') newSettings.phoneModeCustomIp = data.customIp.trim();
+    if (typeof data?.pin === 'string') newSettings.phoneModePin = data.pin.trim();
+    Store.saveSettings(newSettings);
+    const cur = getPhoneModeStatus();
+    if (cur.enabled) {
+      setPhoneMode(false);
+      return setPhoneMode(true, cur.port);
+    }
+    return cur;
   });
 
   ipcMain.handle('library:get', async () => {

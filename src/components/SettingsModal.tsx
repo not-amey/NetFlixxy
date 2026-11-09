@@ -48,8 +48,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     settings?.phoneModeEnabled ?? false
   );
   const [phoneUrl, setPhoneUrl] = useState<string>('');
+  const [phoneAdapterName, setPhoneAdapterName] = useState<string>('');
+  const [phoneIp, setPhoneIp] = useState<string>('');
+  const [phoneCustomIp, setPhoneCustomIp] = useState<string>(settings?.phoneModeCustomIp || '');
+  const [phonePin, setPhonePin] = useState<string>(settings?.phoneModePin || '1234');
   const [phoneCopied, setPhoneCopied] = useState<boolean>(false);
   const [isTogglingPhone, setIsTogglingPhone] = useState<boolean>(false);
+  const [isRefreshingPhone, setIsRefreshingPhone] = useState<boolean>(false);
 
   // Sync state whenever settings prop updates
   useEffect(() => {
@@ -66,6 +71,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setOpenInExternal(settings.openInExternalPlayer ?? false);
       if (typeof settings.phoneModeEnabled === 'boolean') {
         setPhoneModeEnabled(settings.phoneModeEnabled);
+      }
+      if (settings.phoneModeCustomIp !== undefined) {
+        setPhoneCustomIp(settings.phoneModeCustomIp);
+      }
+      if (settings.phoneModePin !== undefined) {
+        setPhonePin(settings.phoneModePin);
       }
     }
   }, [settings]);
@@ -93,6 +104,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           if (status) {
             setPhoneModeEnabled(Boolean(status.enabled));
             if (status.url) setPhoneUrl(status.url);
+            if (status.adapterName) setPhoneAdapterName(status.adapterName);
+            if (status.ip) setPhoneIp(status.ip);
+            if (status.customIp !== undefined) setPhoneCustomIp(status.customIp);
+            if (status.pin) setPhonePin(status.pin);
           }
         }).catch(() => {});
       }
@@ -145,12 +160,55 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         if (res) {
           setPhoneModeEnabled(Boolean(res.enabled));
           if (res.url) setPhoneUrl(res.url);
+          if (res.adapterName) setPhoneAdapterName(res.adapterName);
+          if (res.ip) setPhoneIp(res.ip);
         }
       }
     } catch (err) {
       console.error('Failed to toggle phone mode:', err);
     } finally {
       setIsTogglingPhone(false);
+    }
+  };
+
+  const handleRefreshPhoneNetwork = async () => {
+    setIsRefreshingPhone(true);
+    try {
+      if (typeof window !== 'undefined' && (window as any).electronAPI?.refreshPhoneMode) {
+        const res = await (window as any).electronAPI.refreshPhoneMode();
+        if (res) {
+          setPhoneModeEnabled(Boolean(res.enabled));
+          if (res.url) setPhoneUrl(res.url);
+          if (res.adapterName) setPhoneAdapterName(res.adapterName);
+          if (res.ip) setPhoneIp(res.ip);
+          if (res.customIp !== undefined) setPhoneCustomIp(res.customIp);
+          if (res.pin) setPhonePin(res.pin);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh phone network info:', err);
+    } finally {
+      setIsRefreshingPhone(false);
+    }
+  };
+
+  const handleCustomIpChange = (newIp: string) => {
+    setPhoneCustomIp(newIp);
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.updatePhoneConfig) {
+      (window as any).electronAPI.updatePhoneConfig({ customIp: newIp, pin: phonePin }).then((res: any) => {
+        if (res) {
+          if (res.url) setPhoneUrl(res.url);
+          if (res.ip) setPhoneIp(res.ip);
+          if (res.adapterName) setPhoneAdapterName(res.adapterName);
+        }
+      }).catch(() => {});
+    }
+  };
+
+  const handlePinChange = (newPin: string) => {
+    setPhonePin(newPin);
+    if (typeof window !== 'undefined' && (window as any).electronAPI?.updatePhoneConfig) {
+      (window as any).electronAPI.updatePhoneConfig({ customIp: phoneCustomIp, pin: newPin }).catch(() => {});
     }
   };
 
@@ -201,7 +259,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       miniPlayerSize: miniSize,
       autoPlayNext,
       openInExternalPlayer: openInExternal,
-      phoneModeEnabled
+      phoneModeEnabled,
+      phoneModeCustomIp: phoneCustomIp.trim(),
+      phoneModePin: phonePin.trim()
     });
     onClose();
   };
@@ -603,52 +663,138 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </label>
               </div>
 
-              {/* URL Display Card when Enabled */}
-              {phoneModeEnabled && phoneUrl && (
-                <div style={{
-                  marginTop: '14px',
-                  padding: '12px 14px',
-                  background: '#242424',
-                  borderRadius: '4px',
-                  border: '1px solid #3a3a3a',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: '12px',
-                  flexWrap: 'wrap'
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <Wifi size={16} style={{ color: '#46d369' }} />
-                    <div>
-                      <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Open in phone browser:
-                      </div>
-                      <div style={{ fontSize: '14px', fontWeight: 700, color: '#fff', fontFamily: 'monospace', marginTop: '2px' }}>
-                        {phoneUrl}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleCopyPhoneUrl}
-                    style={{
+              {/* Phone Streaming Mode Details when Enabled */}
+              {phoneModeEnabled && (
+                <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {/* URL Display Card */}
+                  {phoneUrl && (
+                    <div style={{
+                      padding: '12px 14px',
+                      background: '#242424',
+                      borderRadius: '4px',
+                      border: '1px solid #3a3a3a',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '6px',
-                      padding: '6px 12px',
-                      borderRadius: '4px',
-                      border: '1px solid #555',
-                      background: phoneCopied ? '#46d369' : '#333',
-                      color: phoneCopied ? '#000' : '#fff',
-                      fontSize: '12px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    {phoneCopied ? <Check size={14} /> : <Copy size={14} />}
-                    {phoneCopied ? 'Copied!' : 'Copy Link'}
-                  </button>
+                      justifyContent: 'space-between',
+                      gap: '12px',
+                      flexWrap: 'wrap'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Wifi size={18} style={{ color: '#46d369' }} />
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#aaa', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Open in phone browser:
+                          </div>
+                          <div style={{ fontSize: '15px', fontWeight: 700, color: '#fff', fontFamily: 'monospace', marginTop: '2px' }}>
+                            {phoneUrl}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#888', marginTop: '2px' }}>
+                            Adapter: <strong style={{ color: '#ccc' }}>{phoneAdapterName || 'Wi-Fi'}</strong> &bull; IP: <strong style={{ color: '#ccc' }}>{phoneIp || '10.120.62.211'}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={handleRefreshPhoneNetwork}
+                          disabled={isRefreshingPhone}
+                          title="Refresh network adapter"
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '5px',
+                            padding: '6px 10px',
+                            borderRadius: '4px',
+                            border: '1px solid #555',
+                            background: '#333',
+                            color: '#ccc',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <RefreshCw size={13} className={isRefreshingPhone ? 'animate-spin' : ''} />
+                          {isRefreshingPhone ? 'Refreshing...' : 'Refresh'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCopyPhoneUrl}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '6px 12px',
+                            borderRadius: '4px',
+                            border: '1px solid #555',
+                            background: phoneCopied ? '#46d369' : '#333',
+                            color: phoneCopied ? '#000' : '#fff',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          {phoneCopied ? <Check size={14} /> : <Copy size={14} />}
+                          {phoneCopied ? 'Copied!' : 'Copy Link'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Custom IP Override & PIN Controls */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#bbb', marginBottom: '4px', fontWeight: 600 }}>
+                        Custom IP Override (Optional):
+                      </label>
+                      <input
+                        type="text"
+                        value={phoneCustomIp}
+                        onChange={(e) => handleCustomIpChange(e.target.value)}
+                        placeholder="e.g. 10.120.62.211"
+                        style={{
+                          width: '100%',
+                          background: '#242424',
+                          border: '1px solid #3a3a3a',
+                          borderRadius: '4px',
+                          padding: '7px 10px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          outline: 'none',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      <span style={{ fontSize: '11px', color: '#777', display: 'block', marginTop: '2px' }}>
+                        Type a different LAN IP if auto-pick picked the wrong adapter.
+                      </span>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '12px', color: '#bbb', marginBottom: '4px', fontWeight: 600 }}>
+                        Phone Mode PIN:
+                      </label>
+                      <input
+                        type="text"
+                        value={phonePin}
+                        onChange={(e) => handlePinChange(e.target.value)}
+                        placeholder="1234"
+                        maxLength={20}
+                        style={{
+                          width: '100%',
+                          background: '#242424',
+                          border: '1px solid #3a3a3a',
+                          borderRadius: '4px',
+                          padding: '7px 10px',
+                          color: '#fff',
+                          fontSize: '13px',
+                          outline: 'none',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      <span style={{ fontSize: '11px', color: '#777', display: 'block', marginTop: '2px' }}>
+                        Required to authorize library rescanning from phone browser.
+                      </span>
+                    </div>
+                  </div>
                 </div>
               )}
             </div>

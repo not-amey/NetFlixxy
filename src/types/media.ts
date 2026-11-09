@@ -103,6 +103,8 @@ export interface Settings {
   miniPlayerSize?: 'S' | 'M' | 'L';
   phoneModeEnabled?: boolean;
   phoneModePort?: number;
+  phoneModeCustomIp?: string;
+  phoneModePin?: string;
 }
 
 export interface LibraryData {

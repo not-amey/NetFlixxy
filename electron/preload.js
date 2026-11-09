@@ -76,5 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Phone Streaming Mode API
   getPhoneModeStatus: () => ipcRenderer.invoke('phone-mode:get-status'),
-  togglePhoneMode: (enabled) => ipcRenderer.invoke('phone-mode:toggle', enabled)
+  refreshPhoneMode: () => ipcRenderer.invoke('phone-mode:refresh'),
+  togglePhoneMode: (enabled) => ipcRenderer.invoke('phone-mode:toggle', enabled),
+  updatePhoneConfig: (data) => ipcRenderer.invoke('phone-mode:update-config', data)
 });

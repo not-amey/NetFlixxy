@@ -1,7 +1,7 @@
 {
   "name": "netflixxy",
   "productName": "NetFlixxy",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "type": "module",
   "description": "Personal Netflix-style offline media browser and player for Windows",
   "main": "electron/main.js",

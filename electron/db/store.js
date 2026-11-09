@@ -97,7 +97,9 @@ export const Store = {
       isMuted: false,
       lastNonZeroVolume: 0.5,
       phoneModeEnabled: false,
-      phoneModePort: 8080
+      phoneModePort: 8080,
+      phoneModeCustomIp: '',
+      phoneModePin: '1234'
     };
     return { ...defaults, ...readJsonSafe(SETTINGS_FILE, {}) };
   },

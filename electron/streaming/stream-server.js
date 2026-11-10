@@ -90,21 +90,33 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
   }
 
   const promise = (async () => {
-    // Live segment has top priority: cancel active prefetch if it is for a DIFFERENT segment
+    // Live segment has top priority: cancel active prefetch if it is far away or different file/audio
     if (!isPrefetch) {
       if (activePrefetchJobs.has(playerKey)) {
         const curJob = activePrefetchJobs.get(playerKey);
-        if (curJob.targetFile !== targetFile || curJob.start !== start || curJob.audioIndex !== audioIndex) {
+        const isFarSeek =
+          curJob.targetFile !== targetFile ||
+          curJob.audioIndex !== audioIndex ||
+          Math.abs(start - curJob.start) > 16 ||
+          start < curJob.start - 1;
+        if (isFarSeek) {
           try {
             curJob.child.kill();
           } catch {}
           activePrefetchJobs.delete(playerKey);
         }
       }
-      // On seek, cancel old live job immediately so new seek target starts right away
+      // On genuine seek (jumped away by > 10s, backward seek, or different file/audio), cancel old live job immediately.
+      // Do NOT cancel if the new request is normal forward buffering for the next sequential segment!
       if (activeLiveJobs.has(playerKey)) {
         const curJob = activeLiveJobs.get(playerKey);
-        if (curJob.targetFile !== targetFile || curJob.start !== start || curJob.audioIndex !== audioIndex) {
+        const isGenuineSeek =
+          curJob.targetFile !== targetFile ||
+          curJob.audioIndex !== audioIndex ||
+          Math.abs(start - curJob.start) > 10 ||
+          start < curJob.start - 0.5;
+
+        if (isGenuineSeek) {
           try {
             curJob.child.kill();
           } catch {}
@@ -112,10 +124,14 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         }
       }
     } else {
-      // If a prefetch for a different segment was active, cancel it to avoid stale background work
+      // If a prefetch for a distant segment was active, cancel it to avoid stale background work
       if (activePrefetchJobs.has(playerKey)) {
         const curJob = activePrefetchJobs.get(playerKey);
-        if (curJob.targetFile !== targetFile || curJob.start !== start || curJob.audioIndex !== audioIndex) {
+        const isFarAway =
+          curJob.targetFile !== targetFile ||
+          curJob.audioIndex !== audioIndex ||
+          Math.abs(start - curJob.start) > 16;
+        if (isFarAway) {
           try {
             curJob.child.kill();
           } catch {}

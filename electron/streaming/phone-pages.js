@@ -1655,12 +1655,14 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
     video.addEventListener('play', () => {
       playPauseBtn.textContent = '❚❚';
       resetControlsTimer();
+      fetch('/playback-status?state=playing').catch(() => {});
     });
 
     video.addEventListener('pause', () => {
       playPauseBtn.textContent = '▶';
       showControls();
-      saveProgress(video.currentTime, video.duration);
+      fetch('/playback-status?state=paused').catch(() => {});
+      saveProgress(video.currentTime, video.duration, false, true);
     });
 
     video.addEventListener('timeupdate', () => {
@@ -1704,20 +1706,45 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       }
     };
 
-    // Save Progress every 5 seconds and on leave
-    function saveProgress(currentTime, duration, completed = false) {
+    let lastSavedTime = -1;
+
+    // Save Progress every 5 seconds and on leave (lightweight, non-blocking)
+    function saveProgress(currentTime, duration, completed = false, immediate = false) {
       if (!currentTime || isNaN(currentTime) || currentTime < 0) return;
+      const curFloor = Math.floor(currentTime);
+      if (!immediate && curFloor === lastSavedTime) return;
+      lastSavedTime = curFloor;
+
       const payload = {
         id: MEDIA_ITEM.id,
         filePath: MEDIA_ITEM.filePath,
-        currentTime: Math.floor(currentTime),
+        currentTime: curFloor,
         duration: Math.floor(duration || MEDIA_ITEM.duration || 0),
-        completed: !!completed
+        completed: !!completed,
+        immediateFlush: !!immediate
       };
 
+      fetch('/api/progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        keepalive: true
+      }).catch(() => {});
+    }
+
+    function flushLeaveProgress() {
+      if (!video.currentTime || video.currentTime <= 0) return;
+      fetch('/playback-status?state=paused').catch(() => {});
+      const payload = {
+        id: MEDIA_ITEM.id,
+        filePath: MEDIA_ITEM.filePath,
+        currentTime: Math.floor(video.currentTime),
+        duration: Math.floor(video.duration || MEDIA_ITEM.duration || 0),
+        completed: (video.duration > 0 && video.currentTime / video.duration >= 0.95),
+        immediateFlush: true
+      };
       if (navigator.sendBeacon) {
-        const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-        navigator.sendBeacon('/api/progress', blob);
+        navigator.sendBeacon('/api/progress', new Blob([JSON.stringify(payload)], { type: 'application/json' }));
       } else {
         fetch('/api/progress', {
           method: 'POST',
@@ -1735,16 +1762,17 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
     }, 5000);
 
     video.addEventListener('ended', () => {
-      saveProgress(video.duration, video.duration, true);
+      fetch('/playback-status?state=paused').catch(() => {});
+      saveProgress(video.duration, video.duration, true, true);
     });
 
     window.addEventListener('beforeunload', () => {
-      saveProgress(video.currentTime, video.duration);
+      flushLeaveProgress();
     });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        saveProgress(video.currentTime, video.duration);
+        flushLeaveProgress();
       }
     });
 
@@ -1904,7 +1932,14 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,
+          lowLatencyMode: false,
+          backBufferLength: 30,
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 0.5,
+          highBufferWatchdogPeriod: 2,
+          nudgeMaxRetry: 5,
           startPosition: resumeSec > 5 ? resumeSec : 0
         });
         hlsInstance = hls;

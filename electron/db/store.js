@@ -33,19 +33,39 @@ function ensureDirs() {
 
 ensureDirs();
 
+let progressCache = null;
+let progressFlushTimer = null;
+
+function flushProgressNow() {
+  if (progressFlushTimer) {
+    clearTimeout(progressFlushTimer);
+    progressFlushTimer = null;
+  }
+  if (progressCache) {
+    atomicWriteJson(PROGRESS_FILE, progressCache);
+  }
+}
+
+try {
+  process.on('beforeExit', flushProgressNow);
+  process.on('exit', flushProgressNow);
+} catch {}
+
 /**
  * Atomic write helper: writes to temp file then replaces target.
  */
 function atomicWriteJson(filePath, data) {
   ensureDirs();
   const tempPath = `${filePath}.tmp.${Date.now()}`;
-  fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
   try {
+    fs.writeFileSync(tempPath, JSON.stringify(data, null, 2), 'utf-8');
     fs.renameSync(tempPath, filePath);
   } catch (err) {
-    // Windows renameSync fallback if target locked
-    fs.copyFileSync(tempPath, filePath);
-    fs.unlinkSync(tempPath);
+    try {
+      // Windows renameSync fallback if target locked
+      fs.copyFileSync(tempPath, filePath);
+      fs.unlinkSync(tempPath);
+    } catch {}
   }
 }
 
@@ -134,12 +154,19 @@ export const Store = {
 
   // Watch Progress
   getAllProgress() {
-    return readJsonSafe(PROGRESS_FILE, {});
+    if (!progressCache) {
+      progressCache = readJsonSafe(PROGRESS_FILE, {});
+    }
+    return progressCache;
   },
 
   getProgress(filePath) {
     const all = this.getAllProgress();
     return all[filePath] || null;
+  },
+
+  flushProgress() {
+    flushProgressNow();
   },
 
   saveProgress(filePath, progressData) {
@@ -159,7 +186,19 @@ export const Store = {
       subDelay,
       updatedAt: Date.now()
     };
-    atomicWriteJson(PROGRESS_FILE, all);
+
+    // Immediate flush if finished or explicitly requested; otherwise debounce write by 2 seconds
+    if (completed || progressData.immediateFlush) {
+      flushProgressNow();
+    } else if (!progressFlushTimer) {
+      progressFlushTimer = setTimeout(() => {
+        progressFlushTimer = null;
+        if (progressCache) {
+          atomicWriteJson(PROGRESS_FILE, progressCache);
+        }
+      }, 2000);
+    }
+
     return all[filePath];
   }
 };

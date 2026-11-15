@@ -55,6 +55,8 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "build/icon.ico",
+      "assets/**/*",
       "package.json"
     ],
     "extraResources": [
@@ -64,6 +66,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "build/icon.ico",
+        "to": "icon.ico"
       }
     ],
     "win": {

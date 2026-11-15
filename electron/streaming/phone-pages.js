@@ -1652,15 +1652,35 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       }
     };
 
+    // Keep phone screen awake during playback (prevents screen lock & Wi-Fi sleep after 15 mins)
+    let screenWakeLock = null;
+    async function requestScreenWakeLock() {
+      try {
+        if ('wakeLock' in navigator && !screenWakeLock) {
+          screenWakeLock = await navigator.wakeLock.request('screen');
+          screenWakeLock.addEventListener('release', () => { screenWakeLock = null; });
+        }
+      } catch (e) {}
+    }
+
+    function releaseScreenWakeLock() {
+      if (screenWakeLock) {
+        screenWakeLock.release().catch(() => {});
+        screenWakeLock = null;
+      }
+    }
+
     video.addEventListener('play', () => {
       playPauseBtn.textContent = '❚❚';
       resetControlsTimer();
+      requestScreenWakeLock();
       fetch('/playback-status?state=playing').catch(() => {});
     });
 
     video.addEventListener('pause', () => {
       playPauseBtn.textContent = '▶';
       showControls();
+      releaseScreenWakeLock();
       fetch('/playback-status?state=paused').catch(() => {});
       saveProgress(video.currentTime, video.duration, false, true);
     });
@@ -1937,9 +1957,10 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
           maxBufferLength: 30,
           maxMaxBufferLength: 60,
           maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 0.5,
+          maxBufferHole: 1.5,
           highBufferWatchdogPeriod: 2,
-          nudgeMaxRetry: 5,
+          nudgeMaxRetry: 10,
+          nudgeOffset: 0.2,
           startPosition: resumeSec > 5 ? resumeSec : 0
         });
         hlsInstance = hls;
@@ -1956,6 +1977,13 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
         });
 
         hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR || data.details === 'bufferStalledError') {
+            console.warn('[Phone HLS] Buffer stall detected, auto-nudging playback past timing gap');
+            if (video && !video.paused && video.duration > 0 && video.currentTime < video.duration - 1) {
+              video.currentTime += 0.2;
+            }
+            return;
+          }
           if (data.fatal) {
             console.warn('[Phone HLS Error]', data);
             switch (data.type) {

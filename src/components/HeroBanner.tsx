@@ -43,7 +43,7 @@ export const HeroBanner: React.FC<HeroBannerProps> = ({ items, onPlay, onOpenDet
           background: 'linear-gradient(180deg, #1f1f1f 0%, #141414 100%)'
         }}
       >
-        <p style={{ color: '#888', fontSize: '18px' }}>No media found in library. Click Rescan to begin.</p>
+        <p style={{ color: '#888', fontSize: '18px' }}>No media found in library. Open Settings to scan your library.</p>
       </div>
     );
   }

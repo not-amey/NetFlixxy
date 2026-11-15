@@ -28,6 +28,7 @@ export default function App() {
     scanStatus,
     loading,
     rescan,
+    scanNewShows,
     updateProgress,
     saveSettings
   } = useLibrary();
@@ -184,8 +185,6 @@ export default function App() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onRescan={rescan}
-        scanning={scanning}
       />
 
       {/* Scan Progress Toast */}
@@ -395,8 +394,11 @@ export default function App() {
             onClose={() => setIsSettingsOpen(false)}
             onSave={(newSettings) => {
               saveSettings(newSettings);
-              rescan();
             }}
+            onRescanCurrent={() => rescan({ type: 'all' })}
+            onScanNewShows={scanNewShows}
+            scanning={scanning}
+            scanStatus={scanStatus}
           />
         </SettingsErrorBoundary>
       )}

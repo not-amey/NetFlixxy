@@ -1497,12 +1497,15 @@ async function handleRequest(req, res) {
       return;
     }
 
-    // 3.5. Playback status endpoint to pause/resume previews and thumbnails
+    // 3.5. Playback status endpoint to pause/resume previews and thumbnails, and prevent system idle sleep
     if (pathname === '/playback-status') {
       const state = parsedUrl.query.state;
       if (state === 'playing' || state === 'loading' || state === 'buffering') {
         previewGenerator.pauseForPlayback();
         pauseThumbnails();
+        if (typeof globalThis.netflixxyEnablePowerBlocker === 'function') {
+          globalThis.netflixxyEnablePowerBlocker();
+        }
       } else if (state === 'paused' || state === 'stopped') {
         previewGenerator.resumeAfterPlayback();
         resumeThumbnails();

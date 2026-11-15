@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, Menu, globalShortcut, screen, shell, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, Menu, globalShortcut, screen, shell, nativeImage, powerSaveBlocker } from 'electron';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url);
 const { uIOhook, UiohookKey } = require('uiohook-napi');
 const { autoUpdater } = require('electron-updater');
 
-const APP_ID = 'com.netflixxy.player';
+const APP_ID = 'com.netflixxy.app';
 const APP_NAME = 'NetFlixxy';
 
 app.name = APP_NAME;
@@ -32,6 +32,30 @@ let miniPlayerInitData = null;
 let isQuitting = false;
 let isRightAltHeld = false;
 let miniPlayerOpenedBy = null; // 'ctrl_m' | 'alt' | null
+let powerBlockerId = null;
+
+function enablePowerBlocker() {
+  if (powerBlockerId === null || !powerSaveBlocker.isStarted(powerBlockerId)) {
+    try {
+      powerBlockerId = powerSaveBlocker.start('prevent-app-suspension');
+      console.log(`[PowerSaveBlocker] Active (id: ${powerBlockerId}). Preventing system sleep/throttling during streaming.`);
+    } catch (e) {
+      console.warn('[PowerSaveBlocker] Error starting:', e);
+    }
+  }
+}
+
+globalThis.netflixxyEnablePowerBlocker = enablePowerBlocker;
+
+function disablePowerBlocker() {
+  if (powerBlockerId !== null && powerSaveBlocker.isStarted(powerBlockerId)) {
+    try {
+      powerSaveBlocker.stop(powerBlockerId);
+      console.log(`[PowerSaveBlocker] Stopped (id: ${powerBlockerId}).`);
+    } catch (e) {}
+    powerBlockerId = null;
+  }
+}
 
 // Single instance lock to prevent duplicate apps binding port 39281
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
@@ -56,29 +80,35 @@ Menu.setApplicationMenu(null);
 
 function getAppIconPath() {
   const candidateIconPaths = [
-    path.join(__dirname, 'assets/icon.ico'),
-    path.join(__dirname, '../build/icon.ico'),
-    path.join(process.cwd(), 'build/icon.ico'),
-    path.join(__dirname, '../assets/icon.ico'),
-    path.join(process.cwd(), 'assets/icon.ico'),
-    path.join(__dirname, 'assets/icon.png'),
-    path.join(__dirname, '../build/icon.png'),
-    path.join(process.cwd(), 'build/icon.png')
+    process.resourcesPath ? path.join(process.resourcesPath, 'icon.ico') : null,
+    path.join(__dirname, 'assets', 'icon.ico'),
+    path.join(__dirname, '../build', 'icon.ico'),
+    path.join(__dirname, '../assets', 'icon.ico'),
+    typeof app.getAppPath === 'function' ? path.join(app.getAppPath(), 'electron', 'assets', 'icon.ico') : null,
+    typeof app.getAppPath === 'function' ? path.join(app.getAppPath(), 'build', 'icon.ico') : null,
+    path.join(process.cwd(), 'build', 'icon.ico'),
+    path.join(process.cwd(), 'assets', 'icon.ico'),
+    process.resourcesPath ? path.join(process.resourcesPath, 'icon.png') : null,
+    path.join(__dirname, 'assets', 'icon.png'),
+    path.join(__dirname, '../build', 'icon.png'),
+    path.join(process.cwd(), 'build', 'icon.png')
   ];
-  return candidateIconPaths.find(p => fs.existsSync(p)) || path.join(__dirname, 'assets', 'icon.ico');
+  return candidateIconPaths.find(p => p && fs.existsSync(p)) || path.join(__dirname, 'assets', 'icon.ico');
 }
 
 function getAppIcon() {
   const iconPath = getAppIconPath();
   try {
-    const img = nativeImage.createFromPath(iconPath);
-    if (!img.isEmpty()) return img;
+    if (iconPath && fs.existsSync(iconPath)) {
+      const img = nativeImage.createFromPath(iconPath);
+      if (!img.isEmpty()) return img;
+    }
   } catch {}
   return iconPath;
 }
 
 function setupWindowsShortcuts() {
-  if (process.platform !== 'win32' || app.isPackaged) return;
+  if (process.platform !== 'win32') return;
 
   try {
     const iconPath = getAppIconPath();
@@ -93,24 +123,35 @@ function setupWindowsShortcuts() {
     const startMenuShortcut = path.join(startMenuDir, 'NetFlixxy.lnk');
     const desktopShortcut = path.join(app.getPath('desktop'), 'NetFlixxy.lnk');
 
+    const targetPath = process.execPath;
     const shortcutOptions = {
-      target: process.execPath,
+      target: targetPath,
       args: app.isPackaged ? '' : `"${projectRoot}"`,
-      cwd: projectRoot,
-      icon: iconPath || path.join(projectRoot, 'build', 'icon.ico'),
+      cwd: app.isPackaged ? path.dirname(targetPath) : projectRoot,
+      icon: iconPath || targetPath,
       iconIndex: 0,
       appUserModelId: APP_ID,
       description: 'NetFlixxy'
     };
 
-    shell.writeShortcutLink(startMenuShortcut, fs.existsSync(startMenuShortcut) ? 'replace' : 'create', shortcutOptions);
-    shell.writeShortcutLink(desktopShortcut, fs.existsSync(desktopShortcut) ? 'replace' : 'create', shortcutOptions);
+    if (!app.isPackaged) {
+      shell.writeShortcutLink(startMenuShortcut, fs.existsSync(startMenuShortcut) ? 'replace' : 'create', shortcutOptions);
+      shell.writeShortcutLink(desktopShortcut, fs.existsSync(desktopShortcut) ? 'replace' : 'create', shortcutOptions);
+    } else {
+      if (fs.existsSync(startMenuShortcut)) {
+        try { shell.writeShortcutLink(startMenuShortcut, 'update', shortcutOptions); } catch {}
+      }
+      if (fs.existsSync(desktopShortcut)) {
+        try { shell.writeShortcutLink(desktopShortcut, 'update', shortcutOptions); } catch {}
+      }
+    }
   } catch (err) {
     console.warn('[Main] Failed to setup Windows shortcuts:', err);
   }
 }
 
 function createWindow() {
+  const iconPath = getAppIconPath();
   const windowIcon = getAppIcon();
 
   mainWindow = new BrowserWindow({
@@ -121,7 +162,7 @@ function createWindow() {
     minHeight: 650,
     backgroundColor: '#141414',
     title: 'NetFlixxy',
-    icon: windowIcon,
+    icon: iconPath || windowIcon,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
@@ -131,7 +172,13 @@ function createWindow() {
     }
   });
 
-  if (windowIcon) {
+  if (iconPath && fs.existsSync(iconPath)) {
+    try {
+      mainWindow.setIcon(iconPath);
+    } catch {
+      if (windowIcon) mainWindow.setIcon(windowIcon);
+    }
+  } else if (windowIcon) {
     mainWindow.setIcon(windowIcon);
   }
 
@@ -218,6 +265,9 @@ function openMiniPlayer(data) {
     y = Math.max(workArea.y, Math.min(workArea.y + workArea.height - height, y));
   }
 
+  const iconPath = getAppIconPath();
+  const windowIcon = getAppIcon();
+
   miniPlayerWindow = new BrowserWindow({
     width,
     height,
@@ -231,7 +281,7 @@ function openMiniPlayer(data) {
     alwaysOnTop: true,
     skipTaskbar: false,
     backgroundColor: '#000000',
-    icon: getAppIcon(),
+    icon: iconPath || windowIcon,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -241,9 +291,14 @@ function openMiniPlayer(data) {
     }
   });
 
-  const miniIcon = getAppIcon();
-  if (miniIcon) {
-    miniPlayerWindow.setIcon(miniIcon);
+  if (iconPath && fs.existsSync(iconPath)) {
+    try {
+      miniPlayerWindow.setIcon(iconPath);
+    } catch {
+      if (windowIcon) miniPlayerWindow.setIcon(windowIcon);
+    }
+  } else if (windowIcon) {
+    miniPlayerWindow.setIcon(windowIcon);
   }
 
   miniPlayerWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -409,6 +464,7 @@ app.whenReady().then(() => {
   streamServer = startStreamServer(39281);
   const initialSettings = Store.getSettings();
   if (initialSettings.phoneModeEnabled) {
+    enablePowerBlocker();
     setPhoneMode(true, initialSettings.phoneModePort || 8080);
   }
 
@@ -424,6 +480,9 @@ app.whenReady().then(() => {
   ipcMain.handle('phone-mode:toggle', async (_event, enabled) => {
     const status = setPhoneMode(enabled);
     Store.saveSettings({ phoneModeEnabled: !!enabled });
+    if (enabled) {
+      enablePowerBlocker();
+    }
     return status;
   });
 
@@ -448,9 +507,15 @@ app.whenReady().then(() => {
     return Store.getScanReport();
   });
 
-  ipcMain.handle('library:scan', async () => {
+  ipcMain.handle('library:scan', async (_event, options = {}) => {
     const settings = Store.getSettings();
-    const result = await scanLibrary(settings, (progress) => {
+    const showsOnly = Boolean(options && (options.showsOnly || options.type === 'shows'));
+    const scanConfig = {
+      ...settings,
+      showsOnly,
+      existingLibrary: Store.getLibrary()
+    };
+    const result = await scanLibrary(scanConfig, (progress) => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('scan:progress', progress);
       }
@@ -492,6 +557,7 @@ app.whenReady().then(() => {
 
   ipcMain.handle('player:playbackStatus', async (_event, status) => {
     if (status === 'playing') {
+      enablePowerBlocker();
       pauseThumbnails();
       previewGenerator.pauseForPlayback();
     } else {

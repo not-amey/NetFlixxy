@@ -1,17 +1,25 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, FileText, CheckCircle, AlertTriangle, Copy, Check, RefreshCw, Download, Smartphone, Wifi } from 'lucide-react';
+import { X, Save, FileText, CheckCircle, AlertTriangle, Copy, Check, RefreshCw, Download, Smartphone, Wifi, Tv } from 'lucide-react';
 import { Settings, ScanReport } from '../types/media';
 
 interface SettingsModalProps {
   settings: Settings | null;
   onClose: () => void;
   onSave: (settings: Partial<Settings>) => void;
+  onRescanCurrent?: () => Promise<void> | void;
+  onScanNewShows?: () => Promise<void> | void;
+  scanning?: boolean;
+  scanStatus?: string;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   settings,
   onClose,
-  onSave
+  onSave,
+  onRescanCurrent,
+  onScanNewShows,
+  scanning = false,
+  scanStatus = ''
 }) => {
   const [activeTab, setActiveTab] = useState<'settings' | 'report'>('settings');
   const [movieDirs, setMovieDirs] = useState<string>(
@@ -246,6 +254,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  // Auto-reload scan report if scanning finishes while viewing report
+  useEffect(() => {
+    if (!scanning && activeTab === 'report') {
+      loadReport();
+    }
+  }, [scanning, activeTab]);
+
+  const handleTriggerRescanCurrent = async () => {
+    onSave({
+      movieDirs: movieDirs.split('\n').map((s) => s.trim()).filter(Boolean),
+      seriesDirs: seriesDirs.split('\n').map((s) => s.trim()).filter(Boolean),
+      animeDirs: animeDirs.split('\n').map((s) => s.trim()).filter(Boolean)
+    });
+    if (onRescanCurrent) {
+      await onRescanCurrent();
+    }
+  };
+
+  const handleTriggerScanNewShows = async () => {
+    onSave({
+      movieDirs: movieDirs.split('\n').map((s) => s.trim()).filter(Boolean),
+      seriesDirs: seriesDirs.split('\n').map((s) => s.trim()).filter(Boolean),
+      animeDirs: animeDirs.split('\n').map((s) => s.trim()).filter(Boolean)
+    });
+    if (onScanNewShows) {
+      await onScanNewShows();
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave({
@@ -469,6 +506,98 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   fontFamily: 'monospace'
                 }}
               />
+            </div>
+
+            {/* Library Scanning Section: 2 Rescan Buttons */}
+            <div style={{
+              padding: '16px',
+              background: '#1c1c1c',
+              borderRadius: '6px',
+              border: '1px solid #333'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px' }}>
+                <div>
+                  <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: '#fff' }}>Library Scanning</h3>
+                  <p style={{ fontSize: '12px', color: '#888', margin: '4px 0 0' }}>
+                    Rescan all folders or scan series & anime folders for newly added shows.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                  {/* Button 1: Rescan Current Library */}
+                  <button
+                    type="button"
+                    onClick={handleTriggerRescanCurrent}
+                    disabled={scanning}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '7px',
+                      padding: '8px 14px',
+                      borderRadius: '4px',
+                      border: '1px solid #555',
+                      background: '#282828',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      cursor: scanning ? 'not-allowed' : 'pointer',
+                      opacity: scanning ? 0.6 : 1,
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => { if (!scanning) e.currentTarget.style.background = '#383838'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#282828'; }}
+                  >
+                    <RefreshCw size={14} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
+                    <span>Rescan current library</span>
+                  </button>
+
+                  {/* Button 2: Scan for New Shows */}
+                  <button
+                    type="button"
+                    onClick={handleTriggerScanNewShows}
+                    disabled={scanning}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '7px',
+                      padding: '8px 14px',
+                      borderRadius: '4px',
+                      border: '1px solid #e50914',
+                      background: '#e50914',
+                      color: '#fff',
+                      fontWeight: 600,
+                      fontSize: '13px',
+                      cursor: scanning ? 'not-allowed' : 'pointer',
+                      opacity: scanning ? 0.6 : 1,
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => { if (!scanning) e.currentTarget.style.background = '#f40612'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = '#e50914'; }}
+                  >
+                    <Tv size={14} />
+                    <span>Scan for new shows</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Scanning Status / Progress indicator */}
+              {scanning && (
+                <div style={{
+                  marginTop: '12px',
+                  padding: '10px 14px',
+                  background: '#242424',
+                  borderRadius: '4px',
+                  border: '1px solid #e50914',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px'
+                }}>
+                  <RefreshCw size={14} style={{ animation: 'spin 1s linear infinite', color: '#e50914', flexShrink: 0 }} />
+                  <span style={{ fontSize: '12px', color: '#eee', wordBreak: 'break-all' }}>
+                    {scanStatus || 'Scanning files... please wait'}
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* Thumbnail Cache Dir */}
@@ -1065,7 +1194,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     {filteredParsed.length === 0 ? (
                       <tr>
                         <td colSpan={7} style={{ padding: '24px', textAlign: 'center', color: '#777' }}>
-                          No parsed files found. Click "Rescan" in the top bar to scan your library.
+                          No parsed files found. Click "Rescan current library" in Folders & Settings to scan your library.
                         </td>
                       </tr>
                     ) : (

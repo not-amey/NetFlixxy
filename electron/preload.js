@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   getLibrary: () => ipcRenderer.invoke('library:get'),
   getScanReport: () => ipcRenderer.invoke('library:scanReport'),
-  scanLibrary: () => ipcRenderer.invoke('library:scan'),
+  scanLibrary: (options) => ipcRenderer.invoke('library:scan', options),
   onScanProgress: (callback) => {
     const subscription = (_event, value) => callback(value);
     ipcRenderer.on('scan:progress', subscription);

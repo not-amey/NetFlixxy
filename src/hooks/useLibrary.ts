@@ -38,13 +38,14 @@ export function useLibrary() {
     }
   }, []);
 
-  const rescan = useCallback(async () => {
+  const rescan = useCallback(async (options?: { showsOnly?: boolean; type?: 'all' | 'shows' }) => {
     if (!isElectron || scanning) return;
     setScanning(true);
-    setScanStatus('Starting scan...');
+    const isShows = Boolean(options && (options.showsOnly || options.type === 'shows'));
+    setScanStatus(isShows ? 'Scanning for new shows...' : 'Starting full library scan...');
 
     try {
-      const result = await (window as any).electronAPI.scanLibrary();
+      const result = await (window as any).electronAPI.scanLibrary(options);
       setLibrary(result);
       const updatedProg = await (window as any).electronAPI.getAllProgress();
       setProgressMap(updatedProg);
@@ -55,6 +56,10 @@ export function useLibrary() {
       setScanStatus('');
     }
   }, [scanning]);
+
+  const scanNewShows = useCallback(async () => {
+    return rescan({ showsOnly: true, type: 'shows' });
+  }, [rescan]);
 
   useEffect(() => {
     loadData();
@@ -94,6 +99,7 @@ export function useLibrary() {
     scanStatus,
     loading,
     rescan,
+    scanNewShows,
     updateProgress,
     saveSettings
   };

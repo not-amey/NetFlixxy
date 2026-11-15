@@ -198,7 +198,7 @@ export async function scanLibrary(config, onProgress = null) {
     cleanOldThumbnailCache();
   } catch {}
 
-  const { movieDirs = [], seriesDirs = [], animeDirs = [] } = config;
+  const { movieDirs = [], seriesDirs = [], animeDirs = [], showsOnly = false, existingLibrary = null } = config;
   const movies = [];
   const seriesMap = new Map();
   const animeMap = new Map();
@@ -213,89 +213,97 @@ export async function scanLibrary(config, onProgress = null) {
 
   let totalProcessed = 0;
 
-  // 1. Scan Movies
-  for (const movieDir of movieDirs) {
-    if (!fs.existsSync(movieDir)) continue;
-    const videoFiles = await walkDirectory(movieDir, (count, current) => {
-      if (onProgress) onProgress({ phase: 'scanning_movies', currentFile: current, count });
-    });
+  // 1. Scan Movies (skipped if showsOnly is true)
+  if (showsOnly && existingLibrary && Array.isArray(existingLibrary.movies)) {
+    movies.push(...existingLibrary.movies);
+    if (existingLibrary.scanReport?.parsedFiles) {
+      const existingMovieParsed = existingLibrary.scanReport.parsedFiles.filter(f => f.category === 'movie');
+      scanReport.parsedFiles.push(...existingMovieParsed);
+    }
+  } else {
+    for (const movieDir of movieDirs) {
+      if (!fs.existsSync(movieDir)) continue;
+      const videoFiles = await walkDirectory(movieDir, (count, current) => {
+        if (onProgress) onProgress({ phase: 'scanning_movies', currentFile: current, count });
+      });
 
-    for (const videoPath of videoFiles) {
-      totalProcessed++;
-      let stat = null;
-      try {
-        stat = fs.statSync(videoPath);
-      } catch (e) {
-        scanReport.skippedFiles.push({ filePath: videoPath, reason: `File unreadable: ${e.message}` });
-        continue;
-      }
-
-      if (!stat || stat.size === 0) {
-        scanReport.skippedFiles.push({ filePath: videoPath, reason: 'Zero-byte file (empty or corrupt)' });
-        continue;
-      }
-
-      const parsed = parseFilename(videoPath);
-      if (!parsed || !parsed.title || parsed.title.trim() === '') {
-        scanReport.skippedFiles.push({ filePath: videoPath, reason: 'Could not extract valid title from filename' });
-        continue;
-      }
-
-      const folderPath = path.dirname(videoPath);
-      let poster = findSafeLocalMovieImage(videoPath, movieDir, POSTER_NAMES);
-      let backdrop = findSafeLocalMovieImage(videoPath, movieDir, BACKDROP_NAMES);
-      let posterSource = poster ? `Local (${path.basename(poster)})` : 'None';
-      let metadataSource = 'Local file';
-      let overview = '';
-      const subtitles = findSubtitles(videoPath);
-
-      // Fetch clean official movie cover and description
-      try {
-        if (onProgress) onProgress({ phase: 'fetching_details', currentFile: parsed.title });
-        const onlineMeta = await fetchOnlineMetadata(parsed.title, 'movie', parsed.year);
-        if (onlineMeta) {
-          metadataSource = onlineMeta.source || 'Online';
-          if (!poster && onlineMeta.poster) {
-            poster = onlineMeta.poster;
-            posterSource = onlineMeta.source || 'Online';
-          }
-          if (!backdrop && onlineMeta.backdrop) backdrop = onlineMeta.backdrop;
-          if (onlineMeta.overview) overview = onlineMeta.overview;
+      for (const videoPath of videoFiles) {
+        totalProcessed++;
+        let stat = null;
+        try {
+          stat = fs.statSync(videoPath);
+        } catch (e) {
+          scanReport.skippedFiles.push({ filePath: videoPath, reason: `File unreadable: ${e.message}` });
+          continue;
         }
-      } catch (err) {
-        console.error(`Metadata fetch error for ${parsed.title}:`, err.message);
+
+        if (!stat || stat.size === 0) {
+          scanReport.skippedFiles.push({ filePath: videoPath, reason: 'Zero-byte file (empty or corrupt)' });
+          continue;
+        }
+
+        const parsed = parseFilename(videoPath);
+        if (!parsed || !parsed.title || parsed.title.trim() === '') {
+          scanReport.skippedFiles.push({ filePath: videoPath, reason: 'Could not extract valid title from filename' });
+          continue;
+        }
+
+        const folderPath = path.dirname(videoPath);
+        let poster = findSafeLocalMovieImage(videoPath, movieDir, POSTER_NAMES);
+        let backdrop = findSafeLocalMovieImage(videoPath, movieDir, BACKDROP_NAMES);
+        let posterSource = poster ? `Local (${path.basename(poster)})` : 'None';
+        let metadataSource = 'Local file';
+        let overview = '';
+        const subtitles = findSubtitles(videoPath);
+
+        // Fetch clean official movie cover and description
+        try {
+          if (onProgress) onProgress({ phase: 'fetching_details', currentFile: parsed.title });
+          const onlineMeta = await fetchOnlineMetadata(parsed.title, 'movie', parsed.year);
+          if (onlineMeta) {
+            metadataSource = onlineMeta.source || 'Online';
+            if (!poster && onlineMeta.poster) {
+              poster = onlineMeta.poster;
+              posterSource = onlineMeta.source || 'Online';
+            }
+            if (!backdrop && onlineMeta.backdrop) backdrop = onlineMeta.backdrop;
+            if (onlineMeta.overview) overview = onlineMeta.overview;
+          }
+        } catch (err) {
+          console.error(`Metadata fetch error for ${parsed.title}:`, err.message);
+        }
+
+        scanReport.parsedFiles.push({
+          filePath: videoPath,
+          title: parsed.title,
+          season: null,
+          episode: null,
+          category: 'movie',
+          resolution: parsed.resolution,
+          poster,
+          posterSource,
+          metadataSource
+        });
+
+        movies.push({
+          id: `movie_${crypto.createHash('md5').update(videoPath).digest('hex').slice(0, 16)}`,
+          type: 'movie',
+          title: parsed.title,
+          year: parsed.year,
+          resolution: parsed.resolution,
+          filePath: videoPath,
+          folderPath,
+          poster,
+          posterSource,
+          metadataSource,
+          backdrop,
+          overview,
+          subtitles,
+          sizeBytes: stat?.size || 0,
+          mtime: stat?.mtimeMs || 0,
+          addedAt: Date.now()
+        });
       }
-
-      scanReport.parsedFiles.push({
-        filePath: videoPath,
-        title: parsed.title,
-        season: null,
-        episode: null,
-        category: 'movie',
-        resolution: parsed.resolution,
-        poster,
-        posterSource,
-        metadataSource
-      });
-
-      movies.push({
-        id: `movie_${crypto.createHash('md5').update(videoPath).digest('hex').slice(0, 16)}`,
-        type: 'movie',
-        title: parsed.title,
-        year: parsed.year,
-        resolution: parsed.resolution,
-        filePath: videoPath,
-        folderPath,
-        poster,
-        posterSource,
-        metadataSource,
-        backdrop,
-        overview,
-        subtitles,
-        sizeBytes: stat?.size || 0,
-        mtime: stat?.mtimeMs || 0,
-        addedAt: Date.now()
-      });
     }
   }
 

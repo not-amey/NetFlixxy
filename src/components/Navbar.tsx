@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Search, RefreshCw, Settings as SettingsIcon } from 'lucide-react';
+import { Search, Settings as SettingsIcon } from 'lucide-react';
 import logoPng from '../assets/logo.png';
 
 interface NavbarProps {
@@ -8,8 +8,6 @@ interface NavbarProps {
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   onOpenSettings: () => void;
-  onRescan: () => void;
-  scanning: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -17,9 +15,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   setActiveTab,
   searchQuery,
   setSearchQuery,
-  onOpenSettings,
-  onRescan,
-  scanning
+  onOpenSettings
 }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [showSearchInput, setShowSearchInput] = useState(false);
@@ -155,41 +151,6 @@ export const Navbar: React.FC<NavbarProps> = ({
             />
           )}
         </div>
-
-        {/* Rescan Button */}
-        <button
-          onClick={onRescan}
-          disabled={scanning}
-          title="Rescan Local Media"
-          style={{
-            background: 'rgba(255,255,255,0.1)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            color: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '6px 14px',
-            borderRadius: '4px',
-            fontSize: '12px',
-            fontWeight: 600,
-            cursor: scanning ? 'not-allowed' : 'pointer',
-            transition: 'background 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            if (!scanning) e.currentTarget.style.background = 'rgba(255,255,255,0.2)';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-          }}
-        >
-          <RefreshCw
-            size={14}
-            style={{
-              animation: scanning ? 'spin 1s linear infinite' : 'none'
-            }}
-          />
-          <span>{scanning ? 'Scanning...' : 'Rescan'}</span>
-        </button>
 
         {/* Settings Button */}
         <button

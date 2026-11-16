@@ -352,6 +352,7 @@ export const Player: React.FC<PlayerProps> = ({
   const rafIdRef = useRef<number | null>(null);
   const lastSavedSecRef = useRef<number>(-1);
   const hlsRef = useRef<Hls | null>(null);
+  const dragTargetRef = useRef<number | null>(null);
 
   const updateProgressDOM = useCallback((cur: number, dur: number) => {
     const pct = dur > 0 ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
@@ -514,9 +515,8 @@ export const Player: React.FC<PlayerProps> = ({
       }
     },
     onSeekCallback: (targetSec) => {
-      // Seek ONLY changes currentTime on the existing video element. Never change src, remount, or restart ffmpeg.
+      // Seek progress DOM update only - currentTime is already set cleanly once by useMediaPlayer
       if (videoRef.current) {
-        videoRef.current.currentTime = targetSec;
         const actualDur = duration > 0 ? duration : (mediaDetailsRef.current?.duration || 0);
         updateProgressDOM(targetSec, actualDur);
       }
@@ -788,14 +788,17 @@ export const Player: React.FC<PlayerProps> = ({
             }
             const hls = new Hls({
               enableWorker: true,
-              lowLatencyMode: true,
-              backBufferLength: 10,
-              maxBufferLength: 8,
-              maxMaxBufferLength: 16,
-              startPosition: resume > 0 ? resume : 0,
-              maxBufferHole: 0.1,
-              highBufferWatchdogPeriod: 1,
-              nudgeMaxRetry: 5
+              lowLatencyMode: false,
+              backBufferLength: 30,
+              maxBufferLength: 30,
+              maxMaxBufferLength: 60,
+              maxBufferSize: 60 * 1000 * 1000,
+              maxBufferHole: 1.0,
+              maxFragLookUpTolerance: 0.5,
+              highBufferWatchdogPeriod: 2,
+              nudgeMaxRetry: 8,
+              nudgeOffset: 0.2,
+              startPosition: resume > 0 ? resume : 0
             });
             hlsRef.current = hls;
 
@@ -1230,7 +1233,8 @@ export const Player: React.FC<PlayerProps> = ({
     const rect = seekTrackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     const target = ratio * duration;
-    seekTo(target);
+    dragTargetRef.current = target;
+    updateProgressDOM(target, duration);
     setHoverPosition(ratio * 100);
     setHoverTime(target);
   };
@@ -1239,10 +1243,12 @@ export const Player: React.FC<PlayerProps> = ({
     if (!seekTrackRef.current || duration <= 0) return;
     const rect = seekTrackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const target = ratio * duration;
     setHoverPosition(ratio * 100);
-    setHoverTime(ratio * duration);
+    setHoverTime(target);
     if (isDraggingSeek) {
-      seekTo(ratio * duration);
+      dragTargetRef.current = target;
+      updateProgressDOM(target, duration);
     }
   };
 
@@ -1252,6 +1258,10 @@ export const Player: React.FC<PlayerProps> = ({
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {}
+      if (dragTargetRef.current !== null) {
+        seekTo(dragTargetRef.current);
+        dragTargetRef.current = null;
+      }
     }
   };
 

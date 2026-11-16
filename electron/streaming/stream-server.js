@@ -97,8 +97,7 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         const isFarSeek =
           curJob.targetFile !== targetFile ||
           curJob.audioIndex !== audioIndex ||
-          Math.abs(start - curJob.start) > 16 ||
-          start < curJob.start - 1;
+          Math.abs(start - curJob.start) > 4;
         if (isFarSeek) {
           try {
             curJob.child.kill();
@@ -106,17 +105,16 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
           activePrefetchJobs.delete(playerKey);
         }
       }
-      // On genuine seek (jumped away by > 10s, backward seek, or different file/audio), cancel old live job immediately.
-      // Do NOT cancel if the new request is normal forward buffering for the next sequential segment!
+      // On genuine seek (jumped away from sequential playback, backward seek, or different file/audio), cancel old live job immediately.
       if (activeLiveJobs.has(playerKey)) {
         const curJob = activeLiveJobs.get(playerKey);
-        const isGenuineSeek =
-          curJob.targetFile !== targetFile ||
-          curJob.audioIndex !== audioIndex ||
-          Math.abs(start - curJob.start) > 10 ||
-          start < curJob.start - 0.5;
+        const isSequential =
+          curJob.targetFile === targetFile &&
+          curJob.audioIndex === audioIndex &&
+          start >= curJob.start &&
+          start <= curJob.start + (curJob.dur || 4) + 1.0;
 
-        if (isGenuineSeek) {
+        if (!isSequential) {
           try {
             curJob.child.kill();
           } catch {}
@@ -130,7 +128,7 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         const isFarAway =
           curJob.targetFile !== targetFile ||
           curJob.audioIndex !== audioIndex ||
-          Math.abs(start - curJob.start) > 16;
+          Math.abs(start - curJob.start) > 8;
         if (isFarAway) {
           try {
             curJob.child.kill();
@@ -155,9 +153,10 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2'];
 
       if (isH264) {
-        // H.264: Instant remux with copy (takes ~50ms)
+        // H.264: Instant remux with copy (takes ~20-50ms)
         args = [
           '-y',
+          '-noaccurate_seek',
           '-ss', String(start),
           '-i', targetFile,
           '-t', String(dur),
@@ -172,13 +171,14 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
           tempPath
         ];
       } else {
-        // Fast keyframe seek (-ss before -i) + ultrafast real-time transcode with multi-threading
+        // Fast keyframe seek (-noaccurate_seek -ss before -i) + ultrafast real-time transcode with multi-threading
         const vCodecArgs = hwAccelEncoder
           ? ['-c:v', hwAccelEncoder, '-preset', 'veryfast']
           : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '22', '-threads', '0'];
 
         args = [
           '-y',
+          '-noaccurate_seek',
           '-ss', String(start),
           '-i', targetFile,
           '-t', String(dur),
@@ -198,7 +198,7 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
       }
 
       const child = spawn(getFfmpegPath(), args, { windowsHide: true });
-      const jobInfo = { child, targetFile, start, audioIndex };
+      const jobInfo = { child, targetFile, start, dur, audioIndex };
 
       if (isPrefetch) {
         activePrefetchJobs.set(playerKey, jobInfo);
@@ -1530,14 +1530,14 @@ async function handleRequest(req, res) {
         const player = parsedUrl.query.player || 'main';
         const duration = details.duration || 3600;
 
-        // Fast uniform segments: First segment 2.0s for instant startup, subsequent segments 4.0s
+        // Fast uniform segments: First segment 2.0s for instant startup, subsequent segments 3.0s for ultra-fast seek response
         const segments = [];
         let curStart = 0;
         if (duration > 0) {
           const firstDur = Math.min(2.0, duration);
           segments.push({ start: 0, dur: firstDur });
           curStart = firstDur;
-          const segDur = 4.0;
+          const segDur = 3.0;
           while (curStart < duration) {
             const dur = Math.min(segDur, duration - curStart);
             segments.push({ start: curStart, dur });
@@ -1545,7 +1545,7 @@ async function handleRequest(req, res) {
           }
         }
 
-        const targetDur = 5;
+        const targetDur = 4;
         let m3u8 = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${targetDur}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n`;
         for (const seg of segments) {
           const sStr = seg.start.toFixed(3);
@@ -1634,6 +1634,16 @@ async function handleRequest(req, res) {
           const chunksize = end - start + 1;
           const fileStream = fs.createReadStream(targetFile, { start, end });
 
+          req.on('close', () => {
+            fileStream.destroy();
+          });
+          res.on('finish', () => {
+            fileStream.destroy();
+          });
+          fileStream.on('error', () => {
+            fileStream.destroy();
+          });
+
           res.writeHead(206, {
             'Content-Range': `bytes ${start}-${end}/${fileSize}`,
             'Accept-Ranges': 'bytes',
@@ -1650,7 +1660,17 @@ async function handleRequest(req, res) {
             'Accept-Ranges': 'bytes',
             'Access-Control-Allow-Origin': '*'
           });
-          fs.createReadStream(targetFile).pipe(res);
+          const fileStream = fs.createReadStream(targetFile);
+          req.on('close', () => {
+            fileStream.destroy();
+          });
+          res.on('finish', () => {
+            fileStream.destroy();
+          });
+          fileStream.on('error', () => {
+            fileStream.destroy();
+          });
+          fileStream.pipe(res);
         }
         return;
       } catch (err) {

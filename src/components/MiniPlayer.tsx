@@ -171,14 +171,17 @@ export const MiniPlayer: React.FC = () => {
           }
           const hls = new Hls({
             enableWorker: true,
-            lowLatencyMode: true,
-            backBufferLength: 10,
-            maxBufferLength: 8,
-            maxMaxBufferLength: 16,
-            startPosition: resume > 0 ? resume : 0,
-            maxBufferHole: 0.1,
-            highBufferWatchdogPeriod: 1,
-            nudgeMaxRetry: 5
+            lowLatencyMode: false,
+            backBufferLength: 30,
+            maxBufferLength: 30,
+            maxMaxBufferLength: 60,
+            maxBufferSize: 60 * 1000 * 1000,
+            maxBufferHole: 1.0,
+            maxFragLookUpTolerance: 0.5,
+            highBufferWatchdogPeriod: 2,
+            nudgeMaxRetry: 8,
+            nudgeOffset: 0.2,
+            startPosition: resume > 0 ? resume : 0
           });
           hlsRef.current = hls;
 

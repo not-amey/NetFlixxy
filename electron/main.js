@@ -456,6 +456,7 @@ function setupGlobalHooks() {
 
 // App lifecycle
 app.whenReady().then(() => {
+  try {
   setupWindowsShortcuts();
   if (process.platform === 'win32') {
     app.setAppUserModelId(APP_ID);
@@ -792,6 +793,9 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  } catch (err) {
+    console.error('[Main] CRITICAL ERROR IN app.whenReady:', err);
+  }
 });
 
 app.on('before-quit', () => {

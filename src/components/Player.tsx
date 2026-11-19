@@ -780,7 +780,7 @@ export const Player: React.FC<PlayerProps> = ({
         const ext = (details.ext || '').toLowerCase();
         const vCodec = (details.vCodec || '').toLowerCase();
         const aCodec = (details.aCodec || '').toLowerCase();
-        const nativeContainers = ['.mp4', '.webm', '.mkv', '.m4v', '.mov'];
+        const nativeContainers = ['.mp4', '.webm', '.m4v'];
         const nativeVideoCodecs = ['h264', 'avc', 'avc1', 'vp8', 'vp9', 'av1', 'av01'];
         const nativeAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'wav', 'pcm_s16le', 'pcm_s24le', ''];
 

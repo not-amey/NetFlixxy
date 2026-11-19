@@ -156,7 +156,6 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         // H.264: Instant remux with copy (takes ~20-50ms)
         args = [
           '-y',
-          '-noaccurate_seek',
           '-ss', String(start),
           '-i', targetFile,
           '-t', String(dur),
@@ -171,7 +170,7 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
           tempPath
         ];
       } else {
-        // Fast keyframe seek (-noaccurate_seek -ss before -i) + ultrafast real-time transcode with multi-threading
+        // Fast keyframe seek (-ss before -i) + ultrafast real-time transcode with multi-threading
         // CRITICAL: Always output 8-bit yuv420p so Chromium / Electron HTML5 video decoder can decode in hardware
         const vCodecArgs = hwAccelEncoder
           ? ['-c:v', hwAccelEncoder, '-preset', 'veryfast', '-pix_fmt', 'yuv420p']
@@ -179,7 +178,6 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
 
         args = [
           '-y',
-          '-noaccurate_seek',
           '-ss', String(start),
           '-i', targetFile,
           '-t', String(dur),

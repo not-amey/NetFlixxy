@@ -78,5 +78,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPhoneModeStatus: () => ipcRenderer.invoke('phone-mode:get-status'),
   refreshPhoneMode: () => ipcRenderer.invoke('phone-mode:refresh'),
   togglePhoneMode: (enabled) => ipcRenderer.invoke('phone-mode:toggle', enabled),
-  updatePhoneConfig: (data) => ipcRenderer.invoke('phone-mode:update-config', data)
+  updatePhoneConfig: (data) => ipcRenderer.invoke('phone-mode:update-config', data),
+
+  // Discord RPC API
+  updateDiscordPresence: (data) => ipcRenderer.invoke('discord:updatePresence', data),
+  setDiscordBrowsing: (data) => ipcRenderer.invoke('discord:setBrowsing', data),
+  clearDiscordPresence: () => ipcRenderer.invoke('discord:clearPresence')
 });

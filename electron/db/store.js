@@ -119,7 +119,9 @@ export const Store = {
       phoneModeEnabled: false,
       phoneModePort: 8080,
       phoneModeCustomIp: '',
-      phoneModePin: '1234'
+      phoneModePin: '1234',
+      discordRpcEnabled: true,
+      discordClientId: '1392902149163319398'
     };
     return { ...defaults, ...readJsonSafe(SETTINGS_FILE, {}) };
   },

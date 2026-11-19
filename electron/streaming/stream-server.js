@@ -172,9 +172,10 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
         ];
       } else {
         // Fast keyframe seek (-noaccurate_seek -ss before -i) + ultrafast real-time transcode with multi-threading
+        // CRITICAL: Always output 8-bit yuv420p so Chromium / Electron HTML5 video decoder can decode in hardware
         const vCodecArgs = hwAccelEncoder
-          ? ['-c:v', hwAccelEncoder, '-preset', 'veryfast']
-          : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-crf', '22', '-threads', '0'];
+          ? ['-c:v', hwAccelEncoder, '-preset', 'veryfast', '-pix_fmt', 'yuv420p']
+          : ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-crf', '22', '-threads', '0'];
 
         args = [
           '-y',
@@ -187,9 +188,7 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
           '-map', '0:v:0',
           '-map', `0:a:${audioIndex}?`,
           ...vCodecArgs,
-          '-c:a', 'aac',
-          '-b:a', '192k',
-          '-ac', '2',
+          ...audioArgs,
           '-threads', '0',
           '-sn',
           '-f', 'mpegts',
@@ -224,9 +223,9 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
             fs.writeFileSync(doneMarker, '1', 'utf8');
             resolve(segPath);
 
-            // While playing, prefetch the next 3 segments ahead of the playhead
+            // While playing, prefetch the next 4 segments ahead of the playhead
             if (!isPrefetch) {
-              prefetchSegments(playerKey, targetFile, audioIndex, start + dur, 3);
+              prefetchSegments(playerKey, targetFile, audioIndex, start + dur, 4);
             }
           } catch (e) {
             reject(e);
@@ -263,8 +262,9 @@ async function prefetchSegments(playerKey, targetFile, audioIndex, startSec, cou
   try {
     const details = await getMediaDetails(targetFile);
     if (!details || startSec >= details.duration) return;
-    const nextStart = startSec;
-    const nextDur = Math.min(4.0, details.duration - nextStart);
+    const nextStart = Math.round(startSec * 1000) / 1000;
+    const segDur = nextStart === 0 ? Math.min(3.0, details.duration) : 6.0;
+    const nextDur = Math.round(Math.min(segDur, details.duration - nextStart) * 1000) / 1000;
     if (nextDur <= 0.1) return;
 
     const hash = getSegmentHash(targetFile, audioIndex, nextStart, nextDur);
@@ -1530,14 +1530,14 @@ async function handleRequest(req, res) {
         const player = parsedUrl.query.player || 'main';
         const duration = details.duration || 3600;
 
-        // Fast uniform segments: First segment 2.0s for instant startup, subsequent segments 3.0s for ultra-fast seek response
+        // Fast uniform segments: First segment 3.0s for instant startup, subsequent segments 6.0s for smooth, stutter-free playback buffer
         const segments = [];
         let curStart = 0;
         if (duration > 0) {
-          const firstDur = Math.min(2.0, duration);
+          const firstDur = Math.min(3.0, duration);
           segments.push({ start: 0, dur: firstDur });
           curStart = firstDur;
-          const segDur = 3.0;
+          const segDur = 6.0;
           while (curStart < duration) {
             const dur = Math.min(segDur, duration - curStart);
             segments.push({ start: curStart, dur });
@@ -1545,7 +1545,7 @@ async function handleRequest(req, res) {
           }
         }
 
-        const targetDur = 4;
+        const targetDur = 7;
         let m3u8 = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${targetDur}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n`;
         for (const seg of segments) {
           const sStr = seg.start.toFixed(3);

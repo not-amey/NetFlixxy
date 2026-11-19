@@ -102,15 +102,32 @@ export const MiniPlayer: React.FC = () => {
     };
   }, []);
 
+  const syncDiscordPresence = useCallback((playing: boolean, cur?: number, dur?: number) => {
+    try {
+      if (!initData?.item) return;
+      const curTime = cur !== undefined ? cur : (videoRef.current?.currentTime || 0);
+      const totalDur = dur !== undefined ? dur : (duration > 0 ? duration : (mediaDetails?.duration || videoRef.current?.duration || 0));
+      (window as any).electronAPI?.updateDiscordPresence?.({
+        item: initData.item,
+        episode: initData.episode,
+        isPlaying: playing,
+        currentTime: curTime,
+        duration: totalDur
+      });
+    } catch {}
+  }, [initData, duration, mediaDetails]);
+
   const handlePlaying = useCallback(() => {
     originalHandlePlaying();
     (window as any).electronAPI?.notifyPlaybackStatus?.('playing');
-  }, [originalHandlePlaying]);
+    syncDiscordPresence(true);
+  }, [originalHandlePlaying, syncDiscordPresence]);
 
   const handlePause = useCallback(() => {
     originalHandlePause();
     (window as any).electronAPI?.notifyPlaybackStatus?.('paused');
-  }, [originalHandlePause]);
+    syncDiscordPresence(false);
+  }, [originalHandlePause, syncDiscordPresence]);
 
   // Load init data from Electron main process
   useEffect(() => {
@@ -145,7 +162,7 @@ export const MiniPlayer: React.FC = () => {
         const ext = (details.ext || '').toLowerCase();
         const vCodec = (details.vCodec || '').toLowerCase();
         const aCodec = (details.aCodec || '').toLowerCase();
-        const nativeContainers = ['.mp4', '.webm', '.m4v', '.mov'];
+        const nativeContainers = ['.mp4', '.webm', '.mkv', '.m4v', '.mov'];
         const nativeVideoCodecs = ['h264', 'avc', 'avc1', 'vp8', 'vp9', 'av1', 'av01'];
         const nativeAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'wav', 'pcm_s16le', 'pcm_s24le', ''];
 
@@ -173,9 +190,9 @@ export const MiniPlayer: React.FC = () => {
             enableWorker: true,
             lowLatencyMode: false,
             backBufferLength: 30,
-            maxBufferLength: 30,
-            maxMaxBufferLength: 60,
-            maxBufferSize: 60 * 1000 * 1000,
+            maxBufferLength: 60,
+            maxMaxBufferLength: 120,
+            maxBufferSize: 120 * 1000 * 1000,
             maxBufferHole: 1.0,
             maxFragLookUpTolerance: 0.5,
             highBufferWatchdogPeriod: 2,

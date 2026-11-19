@@ -113,8 +113,30 @@ export default function App() {
     return [...movieMatches, ...seriesMatches, ...animeMatches];
   }, [library, searchQuery]);
 
+  // Update Discord presence when browsing library
+  useEffect(() => {
+    if (!playingItem) {
+      const moviesCount = library.movies?.length || 0;
+      const seriesCount = (library.series?.length || 0) + (library.anime?.length || 0);
+      (window as any).electronAPI?.setDiscordBrowsing?.({
+        movies: moviesCount,
+        series: seriesCount
+      });
+    }
+  }, [playingItem, library]);
+
   // Play Actions
   const handlePlayMedia = (item: MediaItem, episode?: EpisodeItem) => {
+    if (settings?.openInExternalPlayer) {
+      const targetPath = item.type === 'series'
+        ? (episode ? episode.filePath : getSeriesResumeEpisode(item as SeriesItem, progressMap).episode?.filePath)
+        : (item as any).filePath;
+      if (targetPath) {
+        (window as any).electronAPI?.openInExternalPlayer(targetPath);
+        return;
+      }
+    }
+
     setPlayingItem(item);
     if (item.type === 'series') {
       if (episode) {

@@ -52,6 +52,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [openInExternal, setOpenInExternal] = useState<boolean>(
     settings?.openInExternalPlayer ?? false
   );
+  const [discordRpcEnabled, setDiscordRpcEnabled] = useState<boolean>(
+    settings?.discordRpcEnabled ?? true
+  );
+  const [discordClientId, setDiscordClientId] = useState<string>(
+    settings?.discordClientId || ''
+  );
   const [phoneModeEnabled, setPhoneModeEnabled] = useState<boolean>(
     settings?.phoneModeEnabled ?? false
   );
@@ -77,6 +83,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setMiniSize(settings.miniPlayerSize || 'M');
       setAutoPlayNext(settings.autoPlayNext ?? true);
       setOpenInExternal(settings.openInExternalPlayer ?? false);
+      setDiscordRpcEnabled(settings.discordRpcEnabled ?? true);
+      setDiscordClientId(settings.discordClientId || '');
       if (typeof settings.phoneModeEnabled === 'boolean') {
         setPhoneModeEnabled(settings.phoneModeEnabled);
       }
@@ -296,6 +304,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       miniPlayerSize: miniSize,
       autoPlayNext,
       openInExternalPlayer: openInExternal,
+      discordRpcEnabled,
+      discordClientId: discordClientId.trim(),
       phoneModeEnabled,
       phoneModeCustomIp: phoneCustomIp.trim(),
       phoneModePin: phonePin.trim()
@@ -733,6 +743,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 />
                 <span>Open videos directly in External Player (VLC / MPV)</span>
               </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', fontSize: '13px', color: '#ddd' }}>
+                <input
+                  type="checkbox"
+                  checked={discordRpcEnabled}
+                  onChange={(e) => setDiscordRpcEnabled(e.target.checked)}
+                  style={{ accentColor: '#5865F2', width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <span>Enable Discord Rich Presence (Show Movie/Show, Season & Episode, Timeline, Poster, and NetFlixxy badge)</span>
+              </label>
+
+              {discordRpcEnabled && (
+                <div style={{ marginTop: '4px', paddingLeft: '26px' }}>
+                  <label style={{ display: 'block', fontSize: '11px', color: '#888', marginBottom: '4px' }}>
+                    Discord Application ID (Optional):
+                  </label>
+                  <input
+                    type="text"
+                    value={discordClientId}
+                    onChange={(e) => setDiscordClientId(e.target.value)}
+                    placeholder="1392902149163319398 (Default NetFlixxy Profile)"
+                    style={{
+                      width: '100%',
+                      maxWidth: '360px',
+                      background: '#141414',
+                      border: '1px solid #333',
+                      borderRadius: '4px',
+                      padding: '6px 10px',
+                      color: '#fff',
+                      fontSize: '12px',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+              )}
             </div>
 
             {/* Phone Streaming Mode (Wi-Fi) */}

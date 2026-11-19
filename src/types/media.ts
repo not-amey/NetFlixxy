@@ -105,6 +105,8 @@ export interface Settings {
   phoneModePort?: number;
   phoneModeCustomIp?: string;
   phoneModePin?: string;
+  discordRpcEnabled?: boolean;
+  discordClientId?: string;
 }
 
 export interface LibraryData {

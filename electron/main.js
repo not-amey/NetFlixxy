@@ -9,6 +9,7 @@ import { scanLibrary } from './scanner/scanner.js';
 import { generateThumbnail, pauseThumbnails, resumeThumbnails } from './scanner/thumbnails.js';
 import { startStreamServer, setPhoneMode, getPhoneModeStatus, getLanIp } from './streaming/stream-server.js';
 import { previewGenerator, hasPreviewFrames } from './scanner/preview-generator.js';
+import { discordRPC } from './rpc/discord-rpc.js';
 
 const require = createRequire(import.meta.url);
 const { uIOhook, UiohookKey } = require('uiohook-napi');
@@ -468,6 +469,13 @@ app.whenReady().then(() => {
     setPhoneMode(true, initialSettings.phoneModePort || 8080);
   }
 
+  // Initialize Discord Rich Presence
+  if (initialSettings.discordRpcEnabled ?? true) {
+    discordRPC.setClientId(initialSettings.discordClientId);
+    discordRPC.setEnabled(true);
+    discordRPC.connect();
+  }
+
   // Setup IPC handlers
   ipcMain.handle('phone-mode:get-status', async () => {
     return getPhoneModeStatus();
@@ -536,7 +544,26 @@ app.whenReady().then(() => {
     if (newSettings && newSettings.phoneModeEnabled !== undefined) {
       setPhoneMode(newSettings.phoneModeEnabled, saved.phoneModePort || 8080);
     }
+    if (newSettings && newSettings.discordRpcEnabled !== undefined) {
+      discordRPC.setEnabled(newSettings.discordRpcEnabled);
+    }
+    if (newSettings && newSettings.discordClientId !== undefined) {
+      discordRPC.setClientId(newSettings.discordClientId);
+    }
     return saved;
+  });
+
+  // Discord RPC IPC
+  ipcMain.handle('discord:updatePresence', async (_event, data) => {
+    return discordRPC.updatePlayback(data);
+  });
+
+  ipcMain.handle('discord:setBrowsing', async (_event, data) => {
+    return discordRPC.setBrowsing(data);
+  });
+
+  ipcMain.handle('discord:clearPresence', async () => {
+    return discordRPC.clearActivity();
   });
 
   ipcMain.handle('progress:get', async (_event, filePath) => {
@@ -569,8 +596,28 @@ app.whenReady().then(() => {
 
   ipcMain.handle('player:external', async (_event, filePath) => {
     const settings = Store.getSettings();
-    const player = settings.externalPlayerPath || 'vlc';
-    exec(`"${player}" "${filePath}"`, (err) => {
+    let player = settings.externalPlayerPath || 'vlc';
+
+    // Auto-detect VLC path if 'vlc' is not in PATH
+    if (player.toLowerCase() === 'vlc') {
+      const vlcPaths = [
+        'C:\\Program Files\\VideoLAN\\VLC\\vlc.exe',
+        'C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe'
+      ];
+      for (const p of vlcPaths) {
+        if (fs.existsSync(p)) {
+          player = p;
+          break;
+        }
+      }
+    }
+
+    // Check if we have resume progress
+    const progressMap = Store.getProgress();
+    const p = progressMap ? progressMap[filePath] : null;
+    const startTimeArg = (p && p.currentTime > 5 && !p.completed) ? ` --start-time=${Math.floor(p.currentTime)}` : '';
+
+    exec(`"${player}" "${filePath}"${startTimeArg}`, (err) => {
       if (err) {
         exec(`start "" "${filePath}"`);
       }
@@ -749,6 +796,9 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  try {
+    discordRPC.destroy();
+  } catch {}
   try {
     uIOhook.stop();
   } catch {}

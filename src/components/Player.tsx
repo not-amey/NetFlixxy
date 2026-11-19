@@ -520,6 +520,7 @@ export const Player: React.FC<PlayerProps> = ({
         const actualDur = duration > 0 ? duration : (mediaDetailsRef.current?.duration || 0);
         updateProgressDOM(targetSec, actualDur);
       }
+      syncDiscordPresence(isPlaying, targetSec);
     },
     onEndedCallback: () => {
       if (activePlayerRef.current !== 'main') return;
@@ -533,10 +534,32 @@ export const Player: React.FC<PlayerProps> = ({
     }
   });
 
+  const syncDiscordPresence = useCallback((playing: boolean, cur?: number, dur?: number) => {
+    try {
+      const curTime = cur !== undefined ? cur : (videoRef.current?.currentTime || 0);
+      const totalDur = dur !== undefined ? dur : (duration > 0 ? duration : (mediaDetailsRef.current?.duration || videoRef.current?.duration || 0));
+      (window as any).electronAPI?.updateDiscordPresence?.({
+        item,
+        episode,
+        isPlaying: playing,
+        currentTime: curTime,
+        duration: totalDur
+      });
+    } catch {}
+  }, [item, episode, duration]);
+
+  useEffect(() => {
+    syncDiscordPresence(true);
+    return () => {
+      (window as any).electronAPI?.clearDiscordPresence?.();
+    };
+  }, [item, episode, syncDiscordPresence]);
+
   const handlePlaying = useCallback(() => {
     originalHandlePlaying();
     (window as any).electronAPI?.notifyPlaybackStatus?.('playing');
-  }, [originalHandlePlaying]);
+    syncDiscordPresence(true);
+  }, [originalHandlePlaying, syncDiscordPresence]);
 
   const handlePause = useCallback(() => {
     originalHandlePause();
@@ -552,7 +575,8 @@ export const Player: React.FC<PlayerProps> = ({
       }
     }
     (window as any).electronAPI?.notifyPlaybackStatus?.('paused');
-  }, [originalHandlePause, currentFilePath, duration, onUpdateProgress, resetControlsTimeout]);
+    syncDiscordPresence(false);
+  }, [originalHandlePause, currentFilePath, duration, onUpdateProgress, resetControlsTimeout, syncDiscordPresence]);
 
   const handlePlayerClose = useCallback(() => {
     if (videoRef.current && currentFilePath) {
@@ -563,6 +587,7 @@ export const Player: React.FC<PlayerProps> = ({
       }
     }
     (window as any).electronAPI?.notifyPlaybackStatus?.('stopped');
+    (window as any).electronAPI?.clearDiscordPresence?.();
     document.body.style.overflow = '';
     document.documentElement.style.overflow = '';
     onClose();
@@ -755,7 +780,7 @@ export const Player: React.FC<PlayerProps> = ({
         const ext = (details.ext || '').toLowerCase();
         const vCodec = (details.vCodec || '').toLowerCase();
         const aCodec = (details.aCodec || '').toLowerCase();
-        const nativeContainers = ['.mp4', '.webm', '.m4v', '.mov'];
+        const nativeContainers = ['.mp4', '.webm', '.mkv', '.m4v', '.mov'];
         const nativeVideoCodecs = ['h264', 'avc', 'avc1', 'vp8', 'vp9', 'av1', 'av01'];
         const nativeAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'wav', 'pcm_s16le', 'pcm_s24le', ''];
 
@@ -790,9 +815,9 @@ export const Player: React.FC<PlayerProps> = ({
               enableWorker: true,
               lowLatencyMode: false,
               backBufferLength: 30,
-              maxBufferLength: 30,
-              maxMaxBufferLength: 60,
-              maxBufferSize: 60 * 1000 * 1000,
+              maxBufferLength: 60,
+              maxMaxBufferLength: 120,
+              maxBufferSize: 120 * 1000 * 1000,
               maxBufferHole: 1.0,
               maxFragLookUpTolerance: 0.5,
               highBufferWatchdogPeriod: 2,

@@ -171,7 +171,7 @@ export const MiniPlayer: React.FC = () => {
         const nativeAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'wav', 'pcm_s16le', 'pcm_s24le', ''];
 
         const isDirectNative =
-          nativeContainers.includes(ext) &&
+          (nativeContainers.includes(ext) || (ext === '.mkv' && ['av1', 'av01', 'vp9', 'vp8'].includes(vCodec))) &&
           nativeVideoCodecs.includes(vCodec) &&
           nativeAudioCodecs.includes(aCodec);
 

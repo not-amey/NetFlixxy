@@ -19,6 +19,7 @@ const APP_ID = 'com.netflixxy.app';
 const APP_NAME = 'NetFlixxy';
 
 app.name = APP_NAME;
+app.commandLine.appendSwitch('enable-experimental-web-platform-features');
 if (process.platform === 'win32') {
   app.setAppUserModelId(APP_ID);
 }

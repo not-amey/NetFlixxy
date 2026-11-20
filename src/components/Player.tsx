@@ -791,10 +791,10 @@ export const Player: React.FC<PlayerProps> = ({
         const nativeAudioCodecs = ['aac', 'mp3', 'opus', 'vorbis', 'flac', 'wav', 'pcm_s16le', 'pcm_s24le', ''];
 
         const isDirectNative =
-          nativeContainers.includes(ext) &&
+          (nativeContainers.includes(ext) || (ext === '.mkv' && ['av1', 'av01', 'vp9', 'vp8'].includes(vCodec))) &&
           nativeVideoCodecs.includes(vCodec) &&
           nativeAudioCodecs.includes(aCodec) &&
-          selectedAudioIndex === 0;
+          (selectedAudioIndex === 0 || !!(video as any)?.audioTracks?.length);
 
         if (hlsRef.current) {
           hlsRef.current.destroy();
@@ -805,11 +805,17 @@ export const Player: React.FC<PlayerProps> = ({
           const directUrl = `http://127.0.0.1:39281/stream?file=${encodeURIComponent(currentFilePath)}`;
           if (video.src !== directUrl) {
             video.src = directUrl;
+            if (resume > 0) {
+              video.currentTime = resume;
+            }
+            video.play().catch(() => {});
+          } else {
+            if ((video as any).audioTracks && (video as any).audioTracks.length > selectedAudioIndex) {
+              for (let i = 0; i < (video as any).audioTracks.length; i++) {
+                (video as any).audioTracks[i].enabled = (i === selectedAudioIndex);
+              }
+            }
           }
-          if (resume > 0) {
-            video.currentTime = resume;
-          }
-          video.play().catch(() => {});
         } else {
           // MKV, HEVC, AC3, DTS, or secondary audio: Use HLS with hls.js
           if (Hls.isSupported()) {
@@ -887,11 +893,19 @@ export const Player: React.FC<PlayerProps> = ({
     };
   }, [currentFilePath, selectedAudioIndex, episode]);
 
-  const isDirect = (mediaDetails?.isDirectPlayable ?? true) && selectedAudioIndex === 0;
+  const isDirect =
+    (mediaDetails?.isDirectPlayable ?? true) &&
+    (selectedAudioIndex === 0 || !!(videoRef.current as any)?.audioTracks?.length);
 
   // Handle switching audio tracks dynamically
   const handleAudioChange = (newAudioIdx: number) => {
     if (newAudioIdx === selectedAudioIndex) return;
+    const video = videoRef.current;
+    if (video && (video as any).audioTracks && (video as any).audioTracks.length > newAudioIdx) {
+      for (let i = 0; i < (video as any).audioTracks.length; i++) {
+        (video as any).audioTracks[i].enabled = (i === newAudioIdx);
+      }
+    }
     setSelectedAudioIndex(newAudioIdx);
   };
 

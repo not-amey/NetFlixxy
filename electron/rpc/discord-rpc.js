@@ -158,31 +158,18 @@ class DiscordRPC {
       .trim();
 
     const isSeries = (type === 'series' || type === 'anime');
+    const targetLower = (cleanTitle || title).toLowerCase();
 
-    // 1. Try TVMaze for series/anime
-    if (isSeries) {
-      try {
-        const tvUrl = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanTitle || title)}`;
-        const res = await fetch(tvUrl, { signal: AbortSignal.timeout(3500) });
-        if (res.ok) {
-          const data = await res.json();
-          const poster = data.image?.original || data.image?.medium;
-          if (poster && poster.startsWith('http')) {
-            this.posterCache.set(cacheKey, poster);
-            return poster;
-          }
-        }
-      } catch {}
-    }
-
-    // 2. Try Cinemeta
+    // 1. Try Cinemeta first (has standard IMDb titles & IDs, accurately distinguishing original from spin-offs like Korea)
     try {
       const cinemetaType = isSeries ? 'series' : 'movie';
       const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cinemetaType}/top/search=${encodeURIComponent(cleanTitle || title)}.json`;
       const res = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
         const data = await res.json();
-        const poster = data.metas && data.metas[0]?.poster;
+        const metas = data.metas || [];
+        const exact = metas.find(m => m.name && m.name.toLowerCase() === targetLower);
+        const poster = (exact && exact.poster) || (metas[0] && metas[0].poster);
         if (poster && poster.startsWith('http')) {
           this.posterCache.set(cacheKey, poster);
           return poster;
@@ -190,20 +177,41 @@ class DiscordRPC {
       }
     } catch {}
 
-    // 3. Fallback to Cinemeta opposite category
+    // 2. Try Cinemeta opposite category
     try {
       const cinemetaType = isSeries ? 'movie' : 'series';
       const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cinemetaType}/top/search=${encodeURIComponent(cleanTitle || title)}.json`;
       const res = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
         const data = await res.json();
-        const poster = data.metas && data.metas[0]?.poster;
+        const metas = data.metas || [];
+        const exact = metas.find(m => m.name && m.name.toLowerCase() === targetLower);
+        const poster = (exact && exact.poster) || (metas[0] && metas[0].poster);
         if (poster && poster.startsWith('http')) {
           this.posterCache.set(cacheKey, poster);
           return poster;
         }
       }
     } catch {}
+
+    // 3. Fallback to TVMaze for series (strictly excluding spin-offs unless asked)
+    if (isSeries) {
+      try {
+        const tvUrl = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanTitle || title)}`;
+        const res = await fetch(tvUrl, { signal: AbortSignal.timeout(3500) });
+        if (res.ok) {
+          const data = await res.json();
+          const showName = (data.name || '').toLowerCase();
+          if (showName === targetLower || (showName.includes(targetLower) && !showName.includes('korea') && !showName.includes('spin-off'))) {
+            const poster = data.image?.original || data.image?.medium;
+            if (poster && poster.startsWith('http')) {
+              this.posterCache.set(cacheKey, poster);
+              return poster;
+            }
+          }
+        }
+      } catch {}
+    }
 
     return APP_ICON_URL;
   }

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useLibrary } from './hooks/useLibrary';
 import { Navbar } from './components/Navbar';
 import { HeroBanner } from './components/HeroBanner';

@@ -555,6 +555,12 @@ export const Player: React.FC<PlayerProps> = ({
     };
   }, [item, episode, syncDiscordPresence]);
 
+  useEffect(() => {
+    if (duration > 0) {
+      syncDiscordPresence(isPlaying, videoRef.current?.currentTime || 0, duration);
+    }
+  }, [duration, isPlaying, syncDiscordPresence]);
+
   const handlePlaying = useCallback(() => {
     originalHandlePlaying();
     (window as any).electronAPI?.notifyPlaybackStatus?.('playing');

@@ -1,7 +1,7 @@
 import net from 'net';
 import crypto from 'crypto';
 
-const DEFAULT_CLIENT_ID = '1392902149163319398';
+const DEFAULT_CLIENT_ID = '868487355114323968'; // Netflix application ID on Discord
 const APP_ICON_URL = 'https://raw.githubusercontent.com/not-amey/NetFlixxy/main/assets/icon.png';
 
 class DiscordRPC {
@@ -150,9 +150,19 @@ class DiscordRPC {
       return this.posterCache.get(cacheKey);
     }
 
-    try {
-      if (type === 'series' || type === 'anime') {
-        const tvUrl = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(title)}`;
+    const cleanTitle = (title || '')
+      .replace(/\b(2160p|4k|1080p|720p|480p|360p|bluray|bd|web-?dl|webrip|web|hdtv|hdrip|hevc|x265|x264|h264|h265|10bit|8bit|remux)\b/gi, ' ')
+      .replace(/\[.*?\]|\(.*?\)/g, ' ')
+      .replace(/[-–—_.]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const isSeries = (type === 'series' || type === 'anime');
+
+    // 1. Try TVMaze for series/anime
+    if (isSeries) {
+      try {
+        const tvUrl = `https://api.tvmaze.com/singlesearch/shows?q=${encodeURIComponent(cleanTitle || title)}`;
         const res = await fetch(tvUrl, { signal: AbortSignal.timeout(3500) });
         if (res.ok) {
           const data = await res.json();
@@ -162,16 +172,13 @@ class DiscordRPC {
             return poster;
           }
         }
-      }
+      } catch {}
+    }
 
-      const cinemetaType = (type === 'series' || type === 'anime') ? 'series' : 'movie';
-      const cleanTitle = title
-        .replace(/\b(2160p|4k|1080p|720p|480p|360p|bluray|bd|web-?dl|webrip|web|hdtv|hdrip|hevc|x265|x264|h264|h265)\b/gi, ' ')
-        .replace(/[-–—_.]+/g, ' ')
-        .replace(/[()[\]{}]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cinemetaType}/top/search=${encodeURIComponent(cleanTitle)}.json`;
+    // 2. Try Cinemeta
+    try {
+      const cinemetaType = isSeries ? 'series' : 'movie';
+      const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cinemetaType}/top/search=${encodeURIComponent(cleanTitle || title)}.json`;
       const res = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(3500) });
       if (res.ok) {
         const data = await res.json();
@@ -183,7 +190,21 @@ class DiscordRPC {
       }
     } catch {}
 
-    this.posterCache.set(cacheKey, APP_ICON_URL);
+    // 3. Fallback to Cinemeta opposite category
+    try {
+      const cinemetaType = isSeries ? 'movie' : 'series';
+      const cinemetaUrl = `https://v3-cinemeta.strem.io/catalog/${cinemetaType}/top/search=${encodeURIComponent(cleanTitle || title)}.json`;
+      const res = await fetch(cinemetaUrl, { signal: AbortSignal.timeout(3500) });
+      if (res.ok) {
+        const data = await res.json();
+        const poster = data.metas && data.metas[0]?.poster;
+        if (poster && poster.startsWith('http')) {
+          this.posterCache.set(cacheKey, poster);
+          return poster;
+        }
+      }
+    } catch {}
+
     return APP_ICON_URL;
   }
 
@@ -248,6 +269,7 @@ class DiscordRPC {
       : 'Browsing Media';
 
     this.setActivity({
+      type: 3, // WATCHING
       details: 'Browsing Library',
       state: statsStr,
       timestamps: {
@@ -306,11 +328,12 @@ class DiscordRPC {
     const posterUrl = await this.fetchOnlinePoster(item.title, item.type);
 
     this.setActivity({
+      type: 3, // WATCHING (renders live timeline progress bar on Discord)
       details,
       state,
       timestamps,
       assets: {
-        large_image: posterUrl,
+        large_image: posterUrl || APP_ICON_URL,
         large_text: title,
         small_image: APP_ICON_URL,
         small_text: 'NetFlixxy'

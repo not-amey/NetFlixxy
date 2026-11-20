@@ -121,9 +121,13 @@ export const Store = {
       phoneModeCustomIp: '',
       phoneModePin: '1234',
       discordRpcEnabled: true,
-      discordClientId: '1392902149163319398'
+      discordClientId: '868487355114323968'
     };
-    return { ...defaults, ...readJsonSafe(SETTINGS_FILE, {}) };
+    const settings = { ...defaults, ...readJsonSafe(SETTINGS_FILE, {}) };
+    if (!settings.discordClientId || settings.discordClientId === '1392902149163319398') {
+      settings.discordClientId = '868487355114323968';
+    }
+    return settings;
   },
 
   saveSettings(newSettings) {

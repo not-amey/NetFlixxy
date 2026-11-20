@@ -129,7 +129,11 @@ export const MiniPlayer: React.FC = () => {
     syncDiscordPresence(false);
   }, [originalHandlePause, syncDiscordPresence]);
 
-  // Load init data from Electron main process
+  useEffect(() => {
+    if (duration > 0 && isPlaying) {
+      syncDiscordPresence(isPlaying, videoRef.current?.currentTime || 0, duration);
+    }
+  }, [duration, isPlaying, syncDiscordPresence]);
   useEffect(() => {
     (window as any).electronAPI?.getMiniInitData().then((data: MiniInitData) => {
       if (!data) return;

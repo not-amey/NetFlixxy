@@ -353,6 +353,7 @@ export const Player: React.FC<PlayerProps> = ({
   const lastSavedSecRef = useRef<number>(-1);
   const hlsRef = useRef<Hls | null>(null);
   const dragTargetRef = useRef<number | null>(null);
+  const lastLoadedFileRef = useRef<string | null>(null);
 
   const updateProgressDOM = useCallback((cur: number, dur: number) => {
     const pct = dur > 0 ? Math.min(100, Math.max(0, (cur / dur) * 100)) : 0;
@@ -780,8 +781,31 @@ export const Player: React.FC<PlayerProps> = ({
         if (details.duration > 0) {
           setDuration(details.duration);
         }
-        // Subtitles off by default on every video load; turns on only when chosen from menu
-        setSelectedSubId('off');
+        // Subtitles: Use forced subtitles by default on every new video load; otherwise off
+        if (lastLoadedFileRef.current !== currentFilePath) {
+          lastLoadedFileRef.current = currentFilePath;
+          const forcedSubs = (details.subtitleTracks || []).filter((t: any) =>
+            t.isForced ||
+            /forced/i.test(t.title || '') ||
+            /forced/i.test(t.label || '')
+          );
+
+          let defaultSubId = 'off';
+          if (forcedSubs.length > 0) {
+            const currentAudioLang = (details.audioTracks?.[selectedAudioIndex]?.language || '').toLowerCase().trim();
+            const matchLangForced = currentAudioLang
+              ? forcedSubs.find((t: any) => (t.language || '').toLowerCase().trim() === currentAudioLang)
+              : null;
+
+            const engForced = forcedSubs.find((t: any) =>
+              (t.language || '').toLowerCase().startsWith('en') ||
+              /english/i.test(t.label || '')
+            );
+
+            defaultSubId = matchLangForced ? matchLangForced.id : (engForced ? engForced.id : forcedSubs[0].id);
+          }
+          setSelectedSubId(defaultSubId);
+        }
 
         const ext = (details.ext || '').toLowerCase();
         const vCodec = (details.vCodec || '').toLowerCase();
@@ -2006,8 +2030,13 @@ export const Player: React.FC<PlayerProps> = ({
                             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
                               <Captions size={16} color={isSelected ? '#e50914' : '#666'} />
                               <div style={{ minWidth: 0 }}>
-                                <div style={{ color: '#fff', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                  {sub.label}
+                                <div style={{ color: '#fff', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{sub.label}</span>
+                                  {(sub.isForced || /forced/i.test(sub.label) || /forced/i.test(sub.title || '')) && (
+                                    <span style={{ fontSize: '10px', background: 'rgba(229, 9, 20, 0.25)', color: '#ff4d4d', border: '1px solid rgba(229, 9, 20, 0.4)', borderRadius: '3px', padding: '1px 5px', fontWeight: 700, flexShrink: 0 }}>
+                                      FORCED
+                                    </span>
+                                  )}
                                 </div>
                                 <div style={{ fontSize: '10px', color: '#888' }}>
                                   {sub.type === 'embedded' ? `Embedded (${sub.codec?.toUpperCase() || 'SRT'})` : 'External File'}

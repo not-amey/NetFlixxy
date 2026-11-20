@@ -512,7 +512,7 @@ function getMediaDetails(filePath) {
   return new Promise((resolve) => {
     const args = [
       '-v', 'error',
-      '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels,channel_layout:stream_tags=language,title',
+      '-show_entries', 'format=duration:stream=index,codec_type,codec_name,channels,channel_layout:stream_disposition=forced,default:stream_tags=language,title',
       '-of', 'json',
       filePath
     ];
@@ -556,6 +556,10 @@ function getMediaDetails(filePath) {
               aIdx++;
             } else if (s.codec_type === 'subtitle') {
               const label = formatSubtitleLabel(s, sIdx);
+              const isForced =
+                s.disposition?.forced === 1 ||
+                /forced/i.test(s.tags?.title || '') ||
+                /forced/i.test(label);
               subtitleTracks.push({
                 id: `embed_${s.index}`,
                 type: 'embedded',
@@ -565,6 +569,7 @@ function getMediaDetails(filePath) {
                 language: s.tags?.language || '',
                 title: s.tags?.title || '',
                 label,
+                isForced: !!isForced,
                 url: `/sub?file=${encodeURIComponent(filePath)}&streamIndex=${s.index}`
               });
               sIdx++;
@@ -587,11 +592,13 @@ function getMediaDetails(filePath) {
             const fBase = path.basename(f, fExt);
             const fullPath = path.join(dir, f);
             const label = fBase.slice(videoBase.length).replace(/^[._-]/, '').trim() || 'Default';
+            const isForced = /forced/i.test(f) || /forced/i.test(label);
             subtitleTracks.push({
               id: `ext_${fullPath}`,
               type: 'external',
               path: fullPath,
               label: `External - ${label} (${fExt.replace('.', '').toUpperCase()})`,
+              isForced: !!isForced,
               url: `/sub?file=${encodeURIComponent(fullPath)}&video=${encodeURIComponent(filePath)}`
             });
           }

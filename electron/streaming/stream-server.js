@@ -57,14 +57,15 @@ const activeLiveJobs = new Map(); // playerKey -> { child, targetFile, start, au
 const activePrefetchJobs = new Map(); // playerKey -> { child, targetFile, start, audioIndex }
 const pendingTranscodes = new Map(); // segKey -> Promise
 
-function getSegmentHash(targetFile, audioIndex, start, dur = 6) {
+function getSegmentHash(targetFile, audioIndex, start, dur = 6, playerKey = 'main') {
   const roundedStart = Math.round(start * 1000) / 1000;
   const roundedDur = Math.round(dur * 1000) / 1000;
-  return crypto.createHash('sha256').update(`${targetFile}_a${audioIndex}_s${roundedStart}_d${roundedDur}`).digest('hex').slice(0, 32);
+  const pTag = playerKey === 'phone' ? 'phone_' : '';
+  return crypto.createHash('sha256').update(`${targetFile}_${pTag}a${audioIndex}_s${roundedStart}_d${roundedDur}`).digest('hex').slice(0, 32);
 }
 
 function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start = 0, dur = 6, isPrefetch = false) {
-  const hash = getSegmentHash(targetFile, audioIndex, start, dur);
+  const hash = getSegmentHash(targetFile, audioIndex, start, dur, playerKey);
   const segPath = path.join(HLS_CACHE_DIR, `${hash}.ts`);
   const doneMarker = `${segPath}.done`;
 
@@ -140,18 +141,26 @@ function transcodeSegment(playerKey = 'main', targetFile, audioIndex = 0, start 
 
     const details = await getMediaDetails(targetFile);
     const vCodec = (details?.vCodec || '').toLowerCase();
-    const aCodec = (details?.aCodec || '').toLowerCase();
     const isH264 = vCodec === 'h264' || vCodec === 'avc' || vCodec === 'avc1';
-    const isAac = aCodec === 'aac' || aCodec === 'mp4a';
+
+    // Target audio track configuration
+    const selectedTrack = details?.audioTracks?.find((t) => t.audioIndex === audioIndex) || details?.audioTracks?.[0];
+    const trackCodec = (selectedTrack?.codec || details?.aCodec || 'aac').toLowerCase();
+    const trackIsAac = trackCodec === 'aac' || trackCodec === 'mp4a';
+    const trackChannels = selectedTrack?.channels || 2;
+
+    // Mobile phones only have stereo speakers/headphones and cannot properly downmix 5.1 surround sound.
+    // If the stream is for phone (playerKey === 'phone') or if audio has > 2 channels (5.1 / 7.1),
+    // we MUST transcode with -ac 2 so dialogue on Center channel is blended into Left & Right.
+    const needStereoDownmix = trackChannels > 2 || playerKey === 'phone';
+    const audioArgs = (trackIsAac && !needStereoDownmix)
+      ? ['-c:a', 'copy']
+      : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2'];
 
     const tempPath = path.join(HLS_CACHE_DIR, `${hash}.tmp.ts`);
 
     return new Promise((resolve, reject) => {
       let args = [];
-      const audioArgs = isAac
-        ? ['-c:a', 'copy']
-        : ['-c:a', 'aac', '-b:a', '192k', '-ac', '2'];
-
       if (isH264) {
         // H.264: Instant remux with copy (takes ~20-50ms)
         args = [
@@ -265,7 +274,7 @@ async function prefetchSegments(playerKey, targetFile, audioIndex, startSec, cou
     const nextDur = Math.round(Math.min(segDur, details.duration - nextStart) * 1000) / 1000;
     if (nextDur <= 0.1) return;
 
-    const hash = getSegmentHash(targetFile, audioIndex, nextStart, nextDur);
+    const hash = getSegmentHash(targetFile, audioIndex, nextStart, nextDur, playerKey);
     const segPath = path.join(HLS_CACHE_DIR, `${hash}.ts`);
     const doneMarker = `${segPath}.done`;
 
@@ -802,6 +811,54 @@ function findLibraryItem(idOrPath) {
   return null;
 }
 
+function getSeriesResumeEpisode(series, allProgress = {}) {
+  if (!series || !series.seasons) return null;
+  const seasonNums = Object.keys(series.seasons).map(Number).sort((a, b) => a - b);
+  const allEpisodes = [];
+  for (const sNum of seasonNums) {
+    const eps = [...(series.seasons[sNum] || [])].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+    allEpisodes.push(...eps);
+  }
+  if (allEpisodes.length === 0) return null;
+
+  const watched = [];
+  for (const ep of allEpisodes) {
+    const p = allProgress[ep.filePath];
+    if (p && ((p.updatedAt && p.updatedAt > 0) || p.currentTime > 5 || p.completed)) {
+      watched.push({ episode: ep, progress: p });
+    }
+  }
+
+  if (watched.length === 0) {
+    return { episode: allEpisodes[0], progress: null, isNextEpisode: false };
+  }
+
+  watched.sort((a, b) => (b.progress.updatedAt || 0) - (a.progress.updatedAt || 0));
+  const mostRecent = watched[0];
+  const p = mostRecent.progress;
+  const isWatched95 =
+    p.completed ||
+    p.percentage >= 95 ||
+    (p.duration > 0 && p.currentTime / p.duration >= 0.95);
+
+  if (isWatched95) {
+    const curIdx = allEpisodes.findIndex((e) => e.filePath === mostRecent.episode.filePath);
+    if (curIdx >= 0 && curIdx + 1 < allEpisodes.length) {
+      return {
+        episode: allEpisodes[curIdx + 1],
+        progress: null,
+        isNextEpisode: true
+      };
+    }
+  }
+
+  return {
+    episode: mostRecent.episode,
+    progress: p,
+    isNextEpisode: false
+  };
+}
+
 function serveDirectRangeStream(req, res, targetFile) {
   try {
     const stat = fs.statSync(targetFile);
@@ -1234,19 +1291,52 @@ async function handleRequest(req, res) {
     const watchMatch = pathname.match(/^\/watch\/(.+)$/);
     if (watchMatch || pathname === '/watch') {
       const mediaId = watchMatch ? decodeURIComponent(watchMatch[1]) : (parsedUrl.query.id || '');
-      const item = findLibraryItem(mediaId);
+      let item = findLibraryItem(mediaId);
+
+      // If requested a series ID instead of an episode ID, resolve to series resume episode
+      if (item && item.seasons && !item.filePath) {
+        const resume = getSeriesResumeEpisode(item, Store.getAllProgress());
+        if (resume && resume.episode) {
+          item = {
+            ...resume.episode,
+            seriesId: item.id,
+            seriesTitle: item.title,
+            title: `${item.title} - S${resume.episode.season}:E${resume.episode.episode} • ${resume.episode.title || `Episode ${resume.episode.episode}`}`
+          };
+        }
+      }
+
       if (!item || !item.filePath || !fs.existsSync(item.filePath)) {
         res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end('<h1 style="color:#fff;background:#141414;padding:40px;font-family:sans-serif;">Video not found. <a href="/" style="color:#e50914;">Return to library</a></h1>');
         return;
       }
 
+      // Check for next episode in series
+      let nextEpisode = null;
+      try {
+        const lib = Store.getLibrary();
+        const allSeries = [...(lib.series || []), ...(lib.anime || [])];
+        for (const s of allSeries) {
+          const allEps = [];
+          const sNums = Object.keys(s.seasons || {}).map(Number).sort((a, b) => a - b);
+          for (const sn of sNums) {
+            allEps.push(...[...(s.seasons[sn] || [])].sort((a, b) => (a.episode || 0) - (b.episode || 0)));
+          }
+          const curIdx = allEps.findIndex((e) => e.filePath === item.filePath || e.id === item.id);
+          if (curIdx >= 0 && curIdx + 1 < allEps.length) {
+            nextEpisode = allEps[curIdx + 1];
+            break;
+          }
+        }
+      } catch {}
+
       const prog = Store.getProgress(item.filePath);
       const initialProgress = prog?.currentTime || 0;
       const details = await getMediaDetails(item.filePath);
 
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(renderPlayerHtml(item, initialProgress, details));
+      res.end(renderPlayerHtml(item, initialProgress, details, nextEpisode));
       return;
     }
 

@@ -545,6 +545,10 @@ export function renderLibraryHtml() {
     .episode-card:active {
       background: #282828;
     }
+    .episode-card.active-resume {
+      border: 1px solid rgba(70, 211, 105, 0.6);
+      background: #1c261e;
+    }
     .ep-thumb-wrap {
       width: 80px;
       aspect-ratio: 16 / 9;
@@ -787,37 +791,108 @@ export function renderLibraryHtml() {
       }
     }
 
+    // Helper to get all episodes in a series ordered by season & episode
+    function getAllSeriesEpisodes(series) {
+      const eps = [];
+      if (!series || !series.seasons) return eps;
+      const sNums = Object.keys(series.seasons).map(Number).sort((a, b) => a - b);
+      for (const sn of sNums) {
+        const seasonList = [...(series.seasons[sn] || [])].sort((a, b) => (a.episode || 0) - (b.episode || 0));
+        eps.push(...seasonList);
+      }
+      return eps;
+    }
+
+    // Helper to find series resume or next episode (matches desktop App / progress.ts logic)
+    function getSeriesResume(series) {
+      const allEps = getAllSeriesEpisodes(series);
+      if (allEps.length === 0) return null;
+
+      const watched = [];
+      for (const ep of allEps) {
+        const p = ep.progress;
+        if (p && ((p.updatedAt && p.updatedAt > 0) || p.currentTime > 5 || p.completed)) {
+          watched.push({ ep, p });
+        }
+      }
+
+      if (watched.length === 0) return null;
+
+      watched.sort((a, b) => (b.p.updatedAt || 0) - (a.p.updatedAt || 0));
+      const mostRecent = watched[0];
+      const p = mostRecent.p;
+      const isWatched95 = p.completed || p.percentage >= 95 || (p.duration > 0 && p.currentTime / p.duration >= 0.95);
+
+      if (isWatched95) {
+        const idx = allEps.findIndex(e => e.filePath === mostRecent.ep.filePath);
+        if (idx >= 0 && idx + 1 < allEps.length) {
+          return {
+            ep: allEps[idx + 1],
+            series,
+            progress: null,
+            isNext: true,
+            updatedAt: p.updatedAt || 0
+          };
+        }
+        return null; // Completed final episode of series
+      }
+
+      return {
+        ep: mostRecent.ep,
+        series,
+        progress: p,
+        isNext: false,
+        updatedAt: p.updatedAt || 0
+      };
+    }
+
     // Build Continue Watching list from all media types
     function getContinueWatchingList() {
       const list = [];
-      const checkItem = (item, type, seriesTitle = '') => {
-        if (item.progress && item.progress.currentTime > 5 && !item.progress.completed) {
-          const duration = item.progress.duration || item.duration || 1;
-          const pct = Math.round((item.progress.currentTime / duration) * 100);
-          if (pct < 95) {
-            list.push({
-              ...item,
-              itemType: type,
-              seriesTitle,
-              pct,
-              updatedAt: item.progress.updatedAt || 0
-            });
-          }
-        }
-      };
+      const seenSeries = new Set();
 
+      // 1. Movies
       for (const m of (libraryData.movies || [])) {
-        checkItem(m, 'movie');
+        const p = m.progress;
+        const isCompleted = p && (p.completed || p.percentage >= 95 || (p.duration > 0 && p.currentTime / p.duration >= 0.95));
+        if (p && !isCompleted && (p.percentage > 1 || p.currentTime > 5)) {
+          const duration = p.duration || m.duration || 1;
+          const pct = Math.min(100, Math.round((p.currentTime / duration) * 100));
+          list.push({
+            ...m,
+            itemType: 'movie',
+            badgeLabel: 'Resume',
+            pct,
+            updatedAt: p.updatedAt || 0
+          });
+        }
       }
 
-      const allSeries = [...(libraryData.series || []), ...(libraryData.anime || [])];
-      for (const s of allSeries) {
-        for (const [sNum, eps] of Object.entries(s.seasons || {})) {
-          if (Array.isArray(eps)) {
-            for (const ep of eps) {
-              checkItem(ep, 'series', s.title);
-            }
-          }
+      // 2. Series & Anime
+      const allShows = [...(libraryData.series || []), ...(libraryData.anime || [])];
+      for (const s of allShows) {
+        if (seenSeries.has(s.id)) continue;
+        const resume = getSeriesResume(s);
+        if (resume && resume.ep) {
+          seenSeries.add(s.id);
+          const ep = resume.ep;
+          const p = resume.progress;
+          const pct = p ? Math.min(100, Math.round((p.currentTime / (p.duration || 1)) * 100)) : 0;
+          list.push({
+            id: ep.id,
+            seriesId: s.id,
+            title: ep.title,
+            seriesTitle: s.title,
+            season: ep.season,
+            episode: ep.episode,
+            poster: s.poster || ep.poster,
+            filePath: ep.filePath,
+            itemType: 'series',
+            badgeLabel: resume.isNext ? 'Next Up' : 'Resume',
+            progress: p,
+            pct,
+            updatedAt: resume.updatedAt || 0
+          });
         }
       }
 
@@ -992,7 +1067,13 @@ export function renderLibraryHtml() {
     function openSeriesDrawer(series) {
       selectedSeries = series;
       const seasons = Object.keys(series.seasons || {}).sort((a,b) => parseInt(a)-parseInt(b));
-      selectedSeason = seasons[0] || '1';
+      
+      const resume = getSeriesResume(series);
+      if (resume && resume.ep && resume.ep.season) {
+        selectedSeason = String(resume.ep.season);
+      } else {
+        selectedSeason = seasons[0] || '1';
+      }
 
       document.getElementById('drawerTitle').textContent = series.title;
       document.getElementById('drawerSubtitle').textContent = seasons.length + ' Season' + (seasons.length === 1 ? '' : 's');
@@ -1002,7 +1083,7 @@ export function renderLibraryHtml() {
         '<button class="season-btn ' + (s === selectedSeason ? 'active' : '') + '" onclick="selectSeason(\\'' + s + '\\')">Season ' + s + '</button>'
       ).join('');
 
-      renderEpisodeList();
+      renderEpisodeList(resume ? resume.ep.id : null);
       document.getElementById('drawerOverlay').classList.add('active');
     }
 
@@ -1014,7 +1095,7 @@ export function renderLibraryHtml() {
       renderEpisodeList();
     };
 
-    function renderEpisodeList() {
+    function renderEpisodeList(activeEpId = null) {
       if (!selectedSeries || !selectedSeason) return;
       const episodes = (selectedSeries.seasons && selectedSeries.seasons[selectedSeason]) || [];
       const list = document.getElementById('episodesList');
@@ -1032,21 +1113,24 @@ export function renderLibraryHtml() {
           epThumb = '/thumb?file=' + encodeURIComponent(ep.filePath);
         }
 
+        const isActive = activeEpId && ep.id === activeEpId;
         let progressHtml = '';
         let timeLabel = '';
         if (ep.progress && ep.progress.duration > 0 && ep.progress.currentTime > 0) {
           const pct = Math.min(100, Math.round((ep.progress.currentTime / ep.progress.duration) * 100));
           progressHtml = '<div class="ep-progress-bar"><div class="ep-progress-fill" style="width: ' + pct + '%;"></div></div>';
           timeLabel = ep.progress.completed ? '✓ Completed' : formatTime(ep.progress.currentTime) + ' / ' + formatTime(ep.progress.duration);
+        } else if (isActive) {
+          timeLabel = 'Next Up';
         }
 
-        return '<div class="episode-card" onclick="window.location.href=\\'/watch/' + encodeURIComponent(ep.id) + '\\'">' +
+        return '<div class="episode-card ' + (isActive ? 'active-resume' : '') + '" onclick="window.location.href=\\'/watch/' + encodeURIComponent(ep.id) + '\\'">' +
           '<div class="ep-thumb-wrap">' +
             (epThumb ? '<img class="ep-thumb" src="' + epThumb + '" loading="lazy" onerror="this.style.display=\\'none\\';">' : '') +
             progressHtml +
           '</div>' +
           '<div class="ep-info">' +
-            '<div class="ep-num">E' + (ep.episode || '') + '</div>' +
+            '<div class="ep-num">E' + (ep.episode || '') + (isActive ? ' <span style="color:#46d369;font-size:11px;font-weight:700;">● RESUME</span>' : '') + '</div>' +
             '<div class="ep-title">' + (ep.title || 'Episode ' + (ep.episode || '')) + '</div>' +
             (timeLabel ? '<div class="ep-meta">' + timeLabel + '</div>' : '') +
           '</div>' +
@@ -1156,8 +1240,13 @@ export function renderLibraryHtml() {
 </html>`;
 }
 
-export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
-  const isDirectPlayable = details.isDirectPlayable ?? true;
+export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}, nextEpisode = null) {
+  // Mobile browsers (iOS Safari, Android Chrome) DO NOT support MKV containers
+  // and cannot downmix multi-channel (5.1) audio.
+  // Only standard MP4/WebM with stereo audio can be direct played on phone!
+  const isExtDirectPhone = ['.mp4', '.webm', '.m4v', '.mov'].includes(details.ext || '');
+  const isAudioStereo = (details.audioTracks?.[0]?.channels || 2) <= 2;
+  const isDirectPlayable = isExtDirectPhone && isAudioStereo && (details.isDirectPlayable ?? true);
   const audioTracks = details.audioTracks || [];
   const subtitleTracks = details.subtitleTracks || [];
 
@@ -1169,7 +1258,13 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
     isDirectPlayable: !!isDirectPlayable,
     initialProgress: initialProgress || 0,
     audioTracks,
-    subtitleTracks
+    subtitleTracks,
+    nextEpisode: nextEpisode ? {
+      id: nextEpisode.id,
+      title: nextEpisode.title,
+      season: nextEpisode.season,
+      episode: nextEpisode.episode
+    } : null
   }).replace(/</g, '\\u003c');
 
   return `<!DOCTYPE html>
@@ -1496,9 +1591,20 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       <div class="controls-row">
         <div class="controls-left">
           <button class="play-pause-btn" id="playPauseBtn" onclick="togglePlayPause()">▶</button>
+          ${nextEpisode ? `<button class="play-pause-btn" id="nextEpBtn" onclick="playNextEpisode()" title="Next Episode" style="font-size:16px;">⏭</button>` : ''}
           <div class="time-display" id="timeDisplay">0:00 / 0:00</div>
         </div>
         <button class="fullscreen-btn" id="fullscreenBtn" onclick="toggleFullscreen()">⛶</button>
+      </div>
+    </div>
+
+    <!-- Up Next Countdown Overlay -->
+    <div class="up-next-overlay" id="upNextOverlay" style="display:none;position:absolute;bottom:70px;right:16px;background:rgba(20,20,20,0.95);border:1px solid #e50914;border-radius:12px;padding:12px 16px;z-index:90;color:#fff;box-shadow:0 8px 24px rgba(0,0,0,0.8);max-width:280px;">
+      <div style="font-size:11px;text-transform:uppercase;color:#aaa;font-weight:700;margin-bottom:4px;">Up Next in <span id="upNextTimer">5</span>s</div>
+      <div id="upNextTitle" style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:8px;"></div>
+      <div style="display:flex;gap:8px;">
+        <button onclick="playNextEpisode()" style="background:#e50914;color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:12px;font-weight:700;cursor:pointer;">Play Now</button>
+        <button onclick="cancelUpNext()" style="background:rgba(255,255,255,0.2);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;">Cancel</button>
       </div>
     </div>
 
@@ -1781,9 +1887,50 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       }
     }, 5000);
 
+    let upNextCountdown = null;
+    function showUpNextOverlay(nextEp) {
+      if (!nextEp) return;
+      const overlay = document.getElementById('upNextOverlay');
+      const timerEl = document.getElementById('upNextTimer');
+      const titleEl = document.getElementById('upNextTitle');
+      if (!overlay || !timerEl || !titleEl) return;
+      
+      const epLabel = 'S' + (nextEp.season || 1) + ':E' + (nextEp.episode || 1) + ' • ' + (nextEp.title || 'Next Episode');
+      titleEl.textContent = epLabel;
+      overlay.style.display = 'block';
+
+      let timeLeft = 5;
+      timerEl.textContent = timeLeft;
+      clearInterval(upNextCountdown);
+      upNextCountdown = setInterval(() => {
+        timeLeft--;
+        if (timeLeft <= 0) {
+          clearInterval(upNextCountdown);
+          playNextEpisode();
+        } else {
+          timerEl.textContent = timeLeft;
+        }
+      }, 1000);
+    }
+
+    window.cancelUpNext = function() {
+      clearInterval(upNextCountdown);
+      const overlay = document.getElementById('upNextOverlay');
+      if (overlay) overlay.style.display = 'none';
+    };
+
+    window.playNextEpisode = function() {
+      if (MEDIA_ITEM.nextEpisode && MEDIA_ITEM.nextEpisode.id) {
+        window.location.href = '/watch/' + encodeURIComponent(MEDIA_ITEM.nextEpisode.id);
+      }
+    };
+
     video.addEventListener('ended', () => {
       fetch('/playback-status?state=paused').catch(() => {});
       saveProgress(video.duration, video.duration, true, true);
+      if (MEDIA_ITEM.nextEpisode) {
+        showUpNextOverlay(MEDIA_ITEM.nextEpisode);
+      }
     });
 
     window.addEventListener('beforeunload', () => {
@@ -1940,15 +2087,20 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
       const streamUrl = '/stream?file=' + encodeURIComponent(MEDIA_ITEM.filePath);
       video.src = streamUrl;
 
-      video.addEventListener('loadedmetadata', () => {
-        if (resumeSec > 5) {
-          video.currentTime = resumeSec;
-          showToast('Resuming from ' + formatTime(resumeSec));
+      const doSeek = () => {
+        if (resumeSec > 5 && Math.abs(video.currentTime - resumeSec) > 2) {
+          try {
+            video.currentTime = resumeSec;
+            showToast('Resuming from ' + formatTime(resumeSec));
+          } catch {}
         }
         video.play().catch(() => {});
-      }, { once: true });
+      };
+
+      video.addEventListener('loadedmetadata', doSeek, { once: true });
+      video.addEventListener('canplay', doSeek, { once: true });
     } else {
-      // MKV, AC3, DTS, HEVC: HLS streaming
+      // MKV, AC3, DTS, HEVC, multi-channel 5.1: HLS streaming with stereo downmix
       if (typeof Hls !== 'undefined' && Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
@@ -1972,6 +2124,9 @@ export function renderPlayerHtml(mediaItem, initialProgress = 0, details = {}) {
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (resumeSec > 5) {
             showToast('Resuming from ' + formatTime(resumeSec));
+            if (Math.abs(video.currentTime - resumeSec) > 2) {
+              video.currentTime = resumeSec;
+            }
           }
           video.play().catch(() => {});
         });

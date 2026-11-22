@@ -1,13 +1,16 @@
 import React, { useState } from 'react';
-import { X, Play, Clock, Folder } from 'lucide-react';
+import { X, Play, Clock, Folder, Check, Star } from 'lucide-react';
 import { MediaItem, SeriesItem, EpisodeItem, WatchProgress } from '../types/media';
 import { getSeriesResumeEpisode } from '../utils/progress';
 
 interface DetailModalProps {
   item: MediaItem;
   progressMap: Record<string, WatchProgress>;
+  isWatched?: boolean;
+  watchedRating?: number | null;
   onClose: () => void;
   onPlayEpisode: (item: MediaItem, episode?: EpisodeItem) => void;
+  onMarkWatched?: (item: MediaItem) => void;
 }
 
 interface EpisodeThumbnailProps {
@@ -75,8 +78,11 @@ const EpisodeThumbnail: React.FC<EpisodeThumbnailProps> = ({ ep, fallbackUrl }) 
 export const DetailModal: React.FC<DetailModalProps> = ({
   item,
   progressMap,
+  isWatched = false,
+  watchedRating = null,
   onClose,
-  onPlayEpisode
+  onPlayEpisode,
+  onMarkWatched
 }) => {
   const isSeries = item.type === 'series';
   const series = isSeries ? (item as SeriesItem) : null;
@@ -167,6 +173,30 @@ export const DetailModal: React.FC<DetailModalProps> = ({
                 <Play size={18} fill="#fff" />
                 <span>Play</span>
               </button>
+
+              {onMarkWatched && (
+                <button
+                  onClick={() => onMarkWatched(item)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: isWatched ? '#10b981' : 'rgba(255,255,255,0.12)',
+                    color: '#ffffff',
+                    border: isWatched ? 'none' : '1px solid #555',
+                    padding: '10px 18px',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.2s'
+                  }}
+                  title={isWatched ? 'Click to edit your rating or remove' : 'Mark as watched'}
+                >
+                  <Check size={18} strokeWidth={isWatched ? 3 : 2} />
+                  <span>{isWatched ? `Watched${watchedRating ? ` (${watchedRating}/10)` : ''}` : 'Mark as Watched'}</span>
+                </button>
+              )}
 
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', color: '#aaa' }}>
                 {item.year && <span>{item.year}</span>}

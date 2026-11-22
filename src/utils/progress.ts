@@ -17,6 +17,42 @@ export function getAllSeriesEpisodes(series: SeriesItem): EpisodeItem[] {
   return allEpisodes;
 }
 
+/**
+ * Checks whether an episode is considered completed, factoring in end credits
+ * (typically starting at >= 88% or within final 180 seconds).
+ */
+export function isEpisodeWatchedCompleted(p?: WatchProgress | null): boolean {
+  if (!p) return false;
+  if (p.completed) return true;
+  if (p.percentage >= 88) return true;
+  if (p.duration > 0 && p.currentTime / p.duration >= 0.88) return true;
+  if (p.duration > 300 && p.duration - p.currentTime <= 180) return true;
+  return false;
+}
+
+/**
+ * Checks if a series has been completed (i.e. every episode is watched, or the final episode is completed).
+ */
+export function isSeriesFullyWatched(
+  series: SeriesItem,
+  progressMap: Record<string, WatchProgress>
+): boolean {
+  const allEpisodes = getAllSeriesEpisodes(series);
+  if (allEpisodes.length === 0) return false;
+
+  // If every episode has been watched to the completion threshold
+  const allFinished = allEpisodes.every((ep) => isEpisodeWatchedCompleted(progressMap[ep.filePath]));
+  if (allFinished) return true;
+
+  // Or if the final episode has been watched to completion
+  const lastEp = allEpisodes[allEpisodes.length - 1];
+  if (lastEp && isEpisodeWatchedCompleted(progressMap[lastEp.filePath])) {
+    return true;
+  }
+
+  return false;
+}
+
 export interface SeriesResumeResult {
   episode: EpisodeItem | null;
   progress: WatchProgress | null;
@@ -57,13 +93,10 @@ export function getSeriesResumeEpisode(
 
   const mostRecent = watchedEpisodes[0];
   const p = mostRecent.progress;
-  const isWatched95 =
-    p.completed ||
-    p.percentage >= 95 ||
-    (p.duration > 0 && p.currentTime / p.duration >= 0.95);
+  const isWatchedCompleted = isEpisodeWatchedCompleted(p);
 
-  if (isWatched95) {
-    // If that episode is 95% or more watched, open the next episode from the start
+  if (isWatchedCompleted) {
+    // If that episode is completed (including credit threshold), open the next episode from the start
     const currentIndex = allEpisodes.findIndex((e) => e.filePath === mostRecent.episode.filePath);
     if (currentIndex >= 0 && currentIndex + 1 < allEpisodes.length) {
       const nextEp = allEpisodes[currentIndex + 1];

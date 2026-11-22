@@ -580,6 +580,23 @@ app.whenReady().then(() => {
     return Store.saveProgress(filePath, data);
   });
 
+  // Watched shows IPC handlers
+  ipcMain.handle('watched:getAll', async () => {
+    return Store.getWatchedShows();
+  });
+
+  ipcMain.handle('watched:save', async (_event, showData) => {
+    return Store.saveWatchedShow(showData);
+  });
+
+  ipcMain.handle('watched:setRating', async (_event, id, rating) => {
+    return Store.setWatchedRating(id, rating);
+  });
+
+  ipcMain.handle('watched:remove', async (_event, id) => {
+    return Store.removeWatchedShow(id);
+  });
+
   ipcMain.handle('thumbnail:generate', async (_event, filePath) => {
     return generateThumbnail(filePath);
   });

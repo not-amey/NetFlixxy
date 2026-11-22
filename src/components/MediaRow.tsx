@@ -1,23 +1,27 @@
 import React, { useRef } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { MediaCard } from './MediaCard';
-import { MediaItem, SeriesItem, WatchProgress } from '../types/media';
+import { MediaItem, SeriesItem, WatchProgress, WatchedShowItem } from '../types/media';
 import { getSeriesResumeEpisode } from '../utils/progress';
 
 interface MediaRowProps {
   title: string;
   items: MediaItem[];
   progressMap: Record<string, WatchProgress>;
+  watchedShows?: WatchedShowItem[];
   onSelect: (item: MediaItem) => void;
   onPlayDirect: (item: MediaItem) => void;
+  onMarkWatched?: (item: MediaItem) => void;
 }
 
 export const MediaRow: React.FC<MediaRowProps> = ({
   title,
   items,
   progressMap,
+  watchedShows = [],
   onSelect,
-  onPlayDirect
+  onPlayDirect,
+  onMarkWatched
 }) => {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
@@ -65,13 +69,22 @@ export const MediaRow: React.FC<MediaRowProps> = ({
             prog = resumeInfo.progress;
           }
 
+          const watchedMatch = watchedShows.find(
+            (w) => w.id === item.id || (w.title && w.title.toLowerCase() === item.title.toLowerCase())
+          );
+          const isWatched = Boolean(watchedMatch);
+          const watchedRating = watchedMatch ? watchedMatch.rating : null;
+
           return (
             <MediaCard
               key={item.id}
               item={item}
               progress={prog}
+              isWatched={isWatched}
+              watchedRating={watchedRating}
               onSelect={onSelect}
               onPlayDirect={onPlayDirect}
+              onMarkWatched={onMarkWatched}
             />
           );
         })}

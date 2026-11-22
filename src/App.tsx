@@ -10,7 +10,9 @@ import { MiniPlayer } from './components/MiniPlayer';
 import { SettingsModal } from './components/SettingsModal';
 import { SettingsErrorBoundary } from './components/ErrorBoundary';
 import { NetflixNIcon } from './components/NetflixLogo';
-import { MediaItem, SeriesItem, EpisodeItem } from './types/media';
+import { WatchedSection } from './components/WatchedSection';
+import { RatingModal } from './components/RatingModal';
+import { MediaItem, SeriesItem, EpisodeItem, WatchedShowItem } from './types/media';
 import { getSeriesResumeEpisode, getAllSeriesEpisodes } from './utils/progress';
 
 export default function App() {
@@ -23,6 +25,7 @@ export default function App() {
   const {
     library,
     progressMap,
+    watchedShows,
     settings,
     scanning,
     scanStatus,
@@ -30,12 +33,16 @@ export default function App() {
     rescan,
     scanNewShows,
     updateProgress,
+    markShowAsWatched,
+    setWatchedRating,
+    removeWatchedShow,
     saveSettings
   } = useLibrary();
 
-  const [activeTab, setActiveTab] = useState<'home' | 'series' | 'movies' | 'anime'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'series' | 'movies' | 'anime' | 'watched'>('home');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedItem, setSelectedItem] = useState<MediaItem | null>(null);
+  const [ratingModalItem, setRatingModalItem] = useState<MediaItem | WatchedShowItem | null>(null);
   const [playingItem, setPlayingItem] = useState<MediaItem | null>(null);
   const [playingEpisode, setPlayingEpisode] = useState<EpisodeItem | null>(null);
   const [startFromBeginning, setStartFromBeginning] = useState(false);
@@ -77,6 +84,12 @@ export default function App() {
     const allShows = [...library.series, ...(library.anime || [])];
     allShows.forEach((s) => {
       if (seenIds.has(s.id)) return;
+      // If series is already in Watched vault, do not show in Continue Watching
+      const isAlreadyWatched = watchedShows.some(
+        (w) => w.id === s.id || (w.title && w.title.toLowerCase() === s.title.toLowerCase())
+      );
+      if (isAlreadyWatched) return;
+
       const resumeInfo = getSeriesResumeEpisode(s, progressMap);
       if (resumeInfo.lastUpdatedAt > 0 && resumeInfo.episode) {
         // If series is completely finished (last episode >= 95%), don't show in continue watching
@@ -101,7 +114,7 @@ export default function App() {
     // Sort most recently watched first
     list.sort((a, b) => b.updatedAt - a.updatedAt);
     return list.map((l) => l.item);
-  }, [library, progressMap]);
+  }, [library, progressMap, watchedShows]);
 
   // Search Results
   const searchResults = useMemo(() => {
@@ -150,6 +163,84 @@ export default function App() {
     } else {
       setStartFromBeginning(false);
       setPlayingEpisode(null);
+    }
+  };
+
+  const handlePlayWatched = (watchedItem: WatchedShowItem) => {
+    // Check if it's a movie
+    if (watchedItem.type === 'movie') {
+      const foundMovie = library.movies.find(
+        (m) => m.id === watchedItem.id || (m.title && m.title.toLowerCase() === watchedItem.title.toLowerCase())
+      );
+      if (foundMovie) {
+        handlePlayMedia(foundMovie);
+        return;
+      }
+    }
+
+    // Check series & anime
+    const allShows = [...library.series, ...(library.anime || [])];
+    const foundShow = allShows.find(
+      (s) => s.id === watchedItem.id || (s.title && s.title.toLowerCase() === watchedItem.title.toLowerCase())
+    );
+    if (foundShow) {
+      handlePlayMedia(foundShow);
+      return;
+    }
+
+    // Fallback: check movies if not typed
+    const foundMovieFallback = library.movies.find(
+      (m) => m.id === watchedItem.id || (m.title && m.title.toLowerCase() === watchedItem.title.toLowerCase())
+    );
+    if (foundMovieFallback) {
+      handlePlayMedia(foundMovieFallback);
+      return;
+    }
+
+    alert(`"${watchedItem.title}" files were removed from disk, but its banner and your rating (${watchedItem.rating ? watchedItem.rating + '/10' : 'Watched'}) are permanently kept in your Watched vault.`);
+  };
+
+  const handleSelectWatched = (watchedItem: WatchedShowItem) => {
+    // Check movies first if movie type
+    if (watchedItem.type === 'movie') {
+      const foundMovie = library.movies.find(
+        (m) => m.id === watchedItem.id || (m.title && m.title.toLowerCase() === watchedItem.title.toLowerCase())
+      );
+      if (foundMovie) {
+        setSelectedItem(foundMovie);
+        return;
+      }
+    }
+
+    const allShows = [...library.series, ...(library.anime || [])];
+    const foundShow = allShows.find(
+      (s) => s.id === watchedItem.id || (s.title && s.title.toLowerCase() === watchedItem.title.toLowerCase())
+    );
+    if (foundShow) {
+      setSelectedItem(foundShow);
+      return;
+    }
+
+    const foundMovieFallback = library.movies.find(
+      (m) => m.id === watchedItem.id || (m.title && m.title.toLowerCase() === watchedItem.title.toLowerCase())
+    );
+    if (foundMovieFallback) {
+      setSelectedItem(foundMovieFallback);
+      return;
+    }
+
+    setRatingModalItem(watchedItem);
+  };
+
+  const handleSaveRating = (rating: number | null) => {
+    if (!ratingModalItem) return;
+    const isAlreadyInWatched = watchedShows.some(
+      (w) => w.id === ratingModalItem.id || (w.title && w.title.toLowerCase() === ratingModalItem.title?.toLowerCase())
+    );
+    if (isAlreadyInWatched) {
+      setWatchedRating(ratingModalItem.id, rating);
+    } else {
+      markShowAsWatched(ratingModalItem as any, rating);
     }
   };
 
@@ -207,6 +298,7 @@ export default function App() {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
         onOpenSettings={() => setIsSettingsOpen(true)}
+        watchedCount={watchedShows.length}
       />
 
       {/* Scan Progress Toast */}
@@ -240,15 +332,23 @@ export default function App() {
             Results for "{searchQuery}" ({searchResults.length})
           </h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '20px' }}>
-            {searchResults.map((item) => (
-              <MediaCard
-                key={item.id}
-                item={item}
-                progress={item.type === 'movie' ? progressMap[(item as any).filePath] : null}
-                onSelect={(selected) => setSelectedItem(selected)}
-                onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
-              />
-            ))}
+            {searchResults.map((item) => {
+              const matchedWatched = watchedShows.find(
+                (w) => w.id === item.id || (w.title && w.title.toLowerCase() === item.title.toLowerCase())
+              );
+              return (
+                <MediaCard
+                  key={item.id}
+                  item={item}
+                  progress={item.type === 'movie' ? progressMap[(item as any).filePath] : null}
+                  isWatched={Boolean(matchedWatched)}
+                  watchedRating={matchedWatched?.rating ?? null}
+                  onSelect={(selected) => setSelectedItem(selected)}
+                  onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
+                  onMarkWatched={(m) => setRatingModalItem(m)}
+                />
+              );
+            })}
           </div>
         </div>
       ) : activeTab === 'home' ? (
@@ -266,8 +366,10 @@ export default function App() {
                 title="Continue Watching"
                 items={continueWatchingItems}
                 progressMap={progressMap}
+                watchedShows={watchedShows}
                 onSelect={(item) => setSelectedItem(item)}
                 onPlayDirect={(item) => handlePlayMedia(item)}
+                onMarkWatched={(m) => setRatingModalItem(m)}
               />
             )}
 
@@ -275,16 +377,20 @@ export default function App() {
               title="Movies"
               items={library.movies}
               progressMap={progressMap}
+              watchedShows={watchedShows}
               onSelect={(item) => setSelectedItem(item)}
               onPlayDirect={(item) => handlePlayMedia(item)}
+              onMarkWatched={(m) => setRatingModalItem(m)}
             />
 
             <MediaRow
               title="TV Shows"
               items={library.series}
               progressMap={progressMap}
+              watchedShows={watchedShows}
               onSelect={(item) => setSelectedItem(item)}
               onPlayDirect={(item) => handlePlayMedia(item)}
+              onMarkWatched={(m) => setRatingModalItem(m)}
             />
 
             {library.anime && library.anime.length > 0 && (
@@ -292,8 +398,10 @@ export default function App() {
                 title="Anime"
                 items={library.anime}
                 progressMap={progressMap}
+                watchedShows={watchedShows}
                 onSelect={(item) => setSelectedItem(item)}
                 onPlayDirect={(item) => handlePlayMedia(item)}
+                onMarkWatched={(m) => setRatingModalItem(m)}
               />
             )}
           </div>
@@ -303,15 +411,23 @@ export default function App() {
         <div style={{ paddingTop: '100px', paddingLeft: '50px', paddingRight: '50px' }}>
           <h2 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '24px' }}>Movies</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '20px' }}>
-            {library.movies.map((m) => (
-              <MediaCard
-                key={m.id}
-                item={m}
-                progress={progressMap[m.filePath]}
-                onSelect={(selected) => setSelectedItem(selected)}
-                onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
-              />
-            ))}
+            {library.movies.map((m) => {
+              const matchedWatched = watchedShows.find(
+                (w) => w.id === m.id || (w.title && w.title.toLowerCase() === m.title.toLowerCase())
+              );
+              return (
+                <MediaCard
+                  key={m.id}
+                  item={m}
+                  progress={progressMap[m.filePath]}
+                  isWatched={Boolean(matchedWatched)}
+                  watchedRating={matchedWatched?.rating ?? null}
+                  onSelect={(selected) => setSelectedItem(selected)}
+                  onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
+                  onMarkWatched={(item) => setRatingModalItem(item)}
+                />
+              );
+            })}
           </div>
         </div>
       ) : activeTab === 'series' ? (
@@ -319,31 +435,57 @@ export default function App() {
         <div style={{ paddingTop: '100px', paddingLeft: '50px', paddingRight: '50px' }}>
           <h2 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '24px' }}>TV Shows</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '20px' }}>
-            {library.series.map((s) => (
-              <MediaCard
-                key={s.id}
-                item={s}
-                onSelect={(selected) => setSelectedItem(selected)}
-                onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
-              />
-            ))}
+            {library.series.map((s) => {
+              const matchedWatched = watchedShows.find(
+                (w) => w.id === s.id || (w.title && w.title.toLowerCase() === s.title.toLowerCase())
+              );
+              return (
+                <MediaCard
+                  key={s.id}
+                  item={s}
+                  isWatched={Boolean(matchedWatched)}
+                  watchedRating={matchedWatched?.rating ?? null}
+                  onSelect={(selected) => setSelectedItem(selected)}
+                  onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
+                  onMarkWatched={(m) => setRatingModalItem(m)}
+                />
+              );
+            })}
           </div>
         </div>
-      ) : (
+      ) : activeTab === 'anime' ? (
         // Anime Tab
         <div style={{ paddingTop: '100px', paddingLeft: '50px', paddingRight: '50px' }}>
           <h2 style={{ fontSize: '28px', fontWeight: 800, marginBottom: '24px' }}>Anime</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))', gap: '20px' }}>
-            {(library.anime || []).map((a) => (
-              <MediaCard
-                key={a.id}
-                item={a}
-                onSelect={(selected) => setSelectedItem(selected)}
-                onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
-              />
-            ))}
+            {(library.anime || []).map((a) => {
+              const matchedWatched = watchedShows.find(
+                (w) => w.id === a.id || (w.title && w.title.toLowerCase() === a.title.toLowerCase())
+              );
+              return (
+                <MediaCard
+                  key={a.id}
+                  item={a}
+                  isWatched={Boolean(matchedWatched)}
+                  watchedRating={matchedWatched?.rating ?? null}
+                  onSelect={(selected) => setSelectedItem(selected)}
+                  onPlayDirect={(toPlay) => handlePlayMedia(toPlay)}
+                  onMarkWatched={(m) => setRatingModalItem(m)}
+                />
+              );
+            })}
           </div>
         </div>
+      ) : (
+        // Dedicated Watched Tab
+        <WatchedSection
+          items={watchedShows}
+          libraryShows={[...library.movies, ...library.series, ...(library.anime || [])]}
+          onSelectWatched={handleSelectWatched}
+          onPlayWatched={handlePlayWatched}
+          onRateShow={(w) => setRatingModalItem(w)}
+          onRemoveWatched={removeWatchedShow}
+        />
       )}
 
       {/* Detail Modal */}
@@ -351,11 +493,38 @@ export default function App() {
         <DetailModal
           item={selectedItem}
           progressMap={progressMap}
+          isWatched={watchedShows.some(
+            (w) => w.id === selectedItem.id || (w.title && w.title.toLowerCase() === selectedItem.title.toLowerCase())
+          )}
+          watchedRating={
+            watchedShows.find(
+              (w) => w.id === selectedItem.id || (w.title && w.title.toLowerCase() === selectedItem.title.toLowerCase())
+            )?.rating ?? null
+          }
           onClose={() => setSelectedItem(null)}
           onPlayEpisode={(item, ep) => {
             setSelectedItem(null);
             handlePlayMedia(item, ep);
           }}
+          onMarkWatched={(item) => setRatingModalItem(item)}
+        />
+      )}
+
+      {/* Rating & Mark as Watched Modal */}
+      {ratingModalItem && (
+        <RatingModal
+          item={ratingModalItem}
+          isWatched={watchedShows.some(
+            (w) => w.id === ratingModalItem.id || (w.title && w.title.toLowerCase() === ratingModalItem.title?.toLowerCase())
+          )}
+          currentRating={
+            watchedShows.find(
+              (w) => w.id === ratingModalItem.id || (w.title && w.title.toLowerCase() === ratingModalItem.title?.toLowerCase())
+            )?.rating ?? (ratingModalItem as any).rating ?? null
+          }
+          onSaveRating={handleSaveRating}
+          onRemoveWatched={() => removeWatchedShow(ratingModalItem.id)}
+          onClose={() => setRatingModalItem(null)}
         />
       )}
 

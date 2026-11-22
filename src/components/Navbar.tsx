@@ -3,11 +3,12 @@ import { Search, Settings as SettingsIcon } from 'lucide-react';
 import logoPng from '../assets/logo.png';
 
 interface NavbarProps {
-  activeTab: 'home' | 'series' | 'movies' | 'anime';
-  setActiveTab: (tab: 'home' | 'series' | 'movies' | 'anime') => void;
+  activeTab: 'home' | 'series' | 'movies' | 'anime' | 'watched';
+  setActiveTab: (tab: 'home' | 'series' | 'movies' | 'anime' | 'watched') => void;
   searchQuery: string;
   setSearchQuery: (query: string) => void;
   onOpenSettings: () => void;
+  watchedCount?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -87,7 +88,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Navigation Tabs */}
         <nav style={{ display: 'flex', gap: '20px' }}>
-          {(['home', 'series', 'movies', 'anime'] as const).map((tab) => (
+          {(['home', 'series', 'movies', 'anime', 'watched'] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -106,7 +107,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 if (activeTab !== tab) e.currentTarget.style.color = '#b3b3b3';
               }}
             >
-              {tab === 'home' ? 'Home' : tab === 'series' ? 'TV Shows' : tab === 'movies' ? 'Movies' : 'Anime'}
+              {tab === 'home' ? 'Home' : tab === 'series' ? 'TV Shows' : tab === 'movies' ? 'Movies' : tab === 'anime' ? 'Anime' : 'Watched'}
             </button>
           ))}
         </nav>

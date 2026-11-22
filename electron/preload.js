@@ -14,6 +14,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getProgress: (filePath) => ipcRenderer.invoke('progress:get', filePath),
   getAllProgress: () => ipcRenderer.invoke('progress:getAll'),
   saveProgress: (filePath, data) => ipcRenderer.invoke('progress:save', filePath, data),
+  getWatchedShows: () => ipcRenderer.invoke('watched:getAll'),
+  saveWatchedShow: (showData) => ipcRenderer.invoke('watched:save', showData),
+  setWatchedRating: (id, rating) => ipcRenderer.invoke('watched:setRating', id, rating),
+  removeWatchedShow: (id) => ipcRenderer.invoke('watched:remove', id),
   openInExternalPlayer: (filePath) => ipcRenderer.invoke('player:external', filePath),
   generateThumbnail: (filePath) => ipcRenderer.invoke('thumbnail:generate', filePath),
   getStreamUrl: (filePath, start = 0, audio = 0) =>

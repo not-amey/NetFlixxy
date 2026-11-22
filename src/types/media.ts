@@ -56,6 +56,23 @@ export interface SeriesItem {
 
 export type MediaItem = MovieItem | SeriesItem;
 
+export interface WatchedShowItem {
+  id: string;
+  type?: 'movie' | 'series';
+  title: string;
+  year?: number | null;
+  poster?: string | null;
+  backdrop?: string | null;
+  banner?: string | null;
+  overview?: string;
+  genres?: string[];
+  totalSeasons?: number;
+  totalEpisodes?: number;
+  rating?: number | null; // Our user rating (e.g. 1-10 or 1-5)
+  completedAt: number; // Timestamp when completed / marked watched
+  position: number; // Locked index order
+}
+
 export interface WatchProgress {
   filePath: string;
   currentTime: number;
